@@ -24,7 +24,7 @@ from radar_visuals import (
     preview_frame,
 )
 from radar_settings import Settings, clean_preferences
-from chest_cue import chest_cue, glowing_container
+from chest_cue import chest_cue_position, glowing_container
 from chest_memory import ChestMemory, MAX_MARKERS
 from community import Community
 
@@ -213,7 +213,7 @@ def monitor(stop, events, options):
                 result = None
                 try:
                     game_frame = np.asarray(capture.grab(crop_rect(window, (0, 0, 1, 1))))
-                    cue = chest_cue(game_frame)
+                    cue = chest_cue_position(game_frame)
                     box = glowing_container(game_frame) if cue and options["boxes"] else None
                     for candidate in candidates:
                         bounds = crop_rect(window, candidate)
@@ -249,7 +249,8 @@ def monitor(stop, events, options):
                         nearby.sort(key=distances.__getitem__)
                         saved_image = memory.update(game_frame, point_id, nearby, can_show_cue, options["memory_drawn"])
                     events.put(("located", window, bounds, dots, north, distance * METERS_PER_PIXEL,
-                                cue, tuple(round(float(value), 1) for value in center),
+                                cue if can_show_cue else None,
+                                tuple(round(float(value), 1) for value in center),
                                 box if can_show_cue else None, point_id,
                                 saved_image))
                 stop.wait(0.18)
@@ -476,20 +477,27 @@ class Radar:
         self.options["memory_drawn"] = tuple(drawn)
         self.memory_until = time.monotonic() + .58
 
-    def show_box(self, window, cue, box):
-        if not cue or not self.prefs["boxes"]:
+    def show_detected_chest(self, window, cue, box):
+        if cue is None:
             self.clear_box()
             return
-        if box is None:
-            self.last_box = None
-            return
         previous = self.last_box
-        self.last_box = box
-        x, y, width, height = box
-        if previous is None or any(abs(value-old) > max(12, min(width, height)*.25)
-                                   for value, old in zip(box, previous)):
-            self.box_overlay.hide()
-            return
+        self.last_box = box if self.prefs["boxes"] else None
+        if self.last_box is not None and previous is not None and all(
+            abs(value-old) <= max(12, min(box[2:])*.25) for value, old in zip(box, previous)
+        ):
+            x, y, width, height = box
+        else:
+            # Extend the game cue radially to keep its glyph visible and avoid
+            # feeding our own marker back into the chest detector.
+            cx, cy = window[2] / 2, window[3] / 2
+            dx, dy = cue[0]-cx, cue[1]-cy
+            length = max(math.hypot(dx, dy), 1)
+            size = max(22, round(window[3] * .034))
+            offset = size * 1.2
+            x = cue[0] + dx / length * offset - size / 2
+            y = cue[1] + dy / length * offset - size / 2
+            width = height = size
         quad = np.float32([[x, y], [x+width, y], [x+width, y+height], [x, y+height]])
         (left, top), marker = saved_chest_marker(quad)
         self.box_overlay.draw(marker, window[0]+left, window[1]+top)
@@ -512,7 +520,8 @@ class Radar:
                 (left + round(x), top + round(y)) for x, y in positions.values()
             )
             frame = radar_frame(bounds["width"], bounds["height"], positions, now,
-                                self.prefs, self.north, reported=self.community.points)
+                                self.prefs, self.north, reported=self.community.points,
+                                observed=self.recent_sightings)
             self.overlay.draw(frame, left, top, round(255 * self.prefs["opacity"] / 100))
         if self.notice_until and now >= self.notice_until:
             self.clear_notice(fade=True)
@@ -781,7 +790,8 @@ class Radar:
                                      if key not in self.options["opened"]}, north)
                 self.check_proximity(window, distance)
                 self.observe_chest(window, cue, area, point_id)
-                self.show_box(window, cue and saved_image is None, box)
+                direct = saved_image is not None and saved_image[0] in ("saved", "live")
+                self.show_detected_chest(window, None if direct else cue, box)
                 self.show_memory(window, saved_image)
             elif state in ("lost", "capture") and args[0] == window:
                 self.hide()
@@ -789,7 +799,8 @@ class Radar:
                 self.alert(state, window)
                 if state == "lost":
                     self.observe_chest(window, args[1])
-                    self.show_box(window, args[1] and args[3] is None, args[2])
+                    direct = args[3] is not None and args[3][0] in ("saved", "live")
+                    self.show_detected_chest(window, None if direct else args[1], args[2])
                     self.show_memory(window, args[3])
                 else:
                     self.clear_box()

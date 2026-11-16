@@ -180,7 +180,7 @@ def marker_sprite(phase, size=5, icon=True):
     return halo.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def glowing_markers(width, height, points, t, size=5, glow=True, icon=True, reported=()):
+def glowing_markers(width, height, points, t, size=5, glow=True, icon=True, reported=(), observed=()):
     image = Image.new("RGBA", (width, height))
     groups = []
     for key, (x, y) in points.items():
@@ -188,16 +188,18 @@ def glowing_markers(width, height, points, t, size=5, glow=True, icon=True, repo
             if (x-group[1])**2 + (y-group[2])**2 < 12**2:
                 group[3] += 1
                 group[4] |= key in reported
+                group[5] |= key in observed
                 break
         else:
-            groups.append([key, x, y, 1, key in reported])
-    for key, x, y, count, community in groups:
+            groups.append([key, x, y, 1, key in reported, key in observed])
+    for key, x, y, count, community, seen in groups:
         pulse = (1 + math.sin(t * 2.35 + key * 0.43)) / 2
         phase = round(23 * pulse) if glow else -1
         image.alpha_composite(marker_sprite(phase, size, icon),
                               (round(x) - GLOW_RADIUS, round(y) - GLOW_RADIUS))
-        if community:
-            ImageDraw.Draw(image).ellipse((x-8, y-8, x+8, y+8), outline="#d2a2ff", width=1)
+        if community or seen:
+            color = "#ff555e" if seen else "#d2a2ff"
+            ImageDraw.Draw(image).ellipse((x-8, y-8, x+8, y+8), outline=color, width=2 if seen else 1)
         if count > 1:
             draw = ImageDraw.Draw(image)
             label = str(min(count, 99))
@@ -284,7 +286,7 @@ def compass_frame(width, height, theme, north, size):
     return ring.resize((width, height), Image.Resampling.LANCZOS)
 
 
-def radar_frame(width, height, points, t, options, north=-90, preview=False, reported=()):
+def radar_frame(width, height, points, t, options, north=-90, preview=False, reported=(), observed=()):
     image = Image.new("RGBA", (width, height))
     theme = options["theme"]
     accent = THEMES[theme][0]
@@ -312,7 +314,7 @@ def radar_frame(width, height, points, t, options, north=-90, preview=False, rep
     image.alpha_composite(ring)
     image.alpha_composite(glowing_markers(width, height, points, t * speed,
                                           7 if preview else 5, options["glow"], options["icons"],
-                                          reported))
+                                          reported, observed))
     if preview:
         ImageDraw.Draw(image).polygon((cx, cy-9, cx-7, cy+7, cx, cy+4, cx+7, cy+7), fill="#fff5ff")
     return image

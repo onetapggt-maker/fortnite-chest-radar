@@ -40,10 +40,10 @@ def cue_lighting(patch, light, glyph, score):
     return relative_gold[outside].mean() > .24
 
 
-def chest_cue(frame):
+def chest_cue_position(frame):
     height, width = frame.shape[:2]
     if height < 100 or width < 100:
-        return False
+        return None
     factor = 720 / height
     resized = cv2.resize(frame, (round(width * factor), 720), interpolation=cv2.INTER_AREA)
     center = resized.shape[1] // 2
@@ -51,7 +51,7 @@ def chest_cue(frame):
     band = resized[125:590, left:center+250, :3]
     gray = cv2.cvtColor(band, cv2.COLOR_BGR2GRAY)
     if gray.shape[1] < 36:
-        return False
+        return None
     for glyph in cue_templates():
         scores = cv2.matchTemplate(gray, glyph, cv2.TM_CCOEFF_NORMED)
         tw, th = glyph.shape[1], glyph.shape[0]
@@ -65,9 +65,13 @@ def chest_cue(frame):
             patch = band[y:y+th, x:x+tw]
             light = gray[y:y+th, x:x+tw]
             if cue_lighting(patch, light, glyph, score):
-                return True
+                return ((left + x + tw / 2) / factor, (125 + y + th / 2) / factor)
             scores[max(0,y-5):y+6, max(0,x-5):x+6] = -1
-    return False
+    return None
+
+
+def chest_cue(frame):
+    return chest_cue_position(frame) is not None
 
 
 def glowing_container(frame):

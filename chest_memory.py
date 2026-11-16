@@ -171,5 +171,5 @@ class ChestMemory:
                     images = {point: visible / ratio}
                     if point is not None and self.remember(point, resized, gray, visible):
                         return ("saved", images)
-                    return ("images", images)
+                    return ("live", images)
         return None
