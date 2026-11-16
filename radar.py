@@ -28,12 +28,14 @@ from radar_settings import Settings, clean_preferences
 from chest_cue import chest_cue_position, glowing_container
 from chest_memory import ChestMemory, LIVE_REGION, MAX_MARKERS
 from community import Community
+from find_tracker import OpenTracker, TrackerLog, monitor_banners
 
 
 HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "minimap.local.json"
 PREFERENCES = HERE / "radar-ui.local.json"
 OBSERVATIONS = HERE / "chest-observations.jsonl"
+TRACKER_LOG = HERE / "chest-finds.jsonl"
 MEMORY_FOLDER = HERE / "chest-memory.local"
 REPORT_URL = "https://github.com/onetapggt-maker/fortnite-chest-radar/issues/new"
 # v43.10 source map of 2048 pixels uses about .006825 pixels per world centimetre.
@@ -198,8 +200,7 @@ def monitor_visible_chests(stop, options):
         return
     with MSS() as capture:
         while not stop.is_set():
-            active = options["enabled"] and not options["paused"] and options["memory"]
-            window = fortnite_window() if active else None
+            window = None if options["paused"] else fortnite_window()
             if window is None:
                 options["live_chest"] = None
                 stop.wait(.08)
@@ -350,6 +351,11 @@ class Radar:
         self.marked_chests = set()
         self.handled_visual = 0.0
         self.pending_open = None
+        self.open_tracker = OpenTracker(same_chest)
+        self.tracker = TrackerLog(TRACKER_LOG)
+        self.tracker_events = Queue()
+        self.tracker_status = "Запускаю распознавание баннеров…"
+        self.tracker_window = None
         self.points = {}
         self.demo_index = 0
         self.demo_start = time.monotonic()
@@ -397,12 +403,17 @@ class Radar:
                                                      lambda: self.actions.put(self.reset_opened)),
                                     pystray.MenuItem("Замеченные сундуки",
                                                      lambda: self.actions.put(self.show_observations)),
+                                    pystray.MenuItem("Трекер находок",
+                                                     lambda: self.actions.put(self.show_tracker)),
                                     pystray.MenuItem("Выход", lambda: self.actions.put(self.close)),
                                 ))
         self.tray.run_detached()
         threading.Thread(target=monitor, args=(self.stop, self.events, self.options),
                          daemon=True).start()
         threading.Thread(target=monitor_visible_chests, args=(self.stop, self.options),
+                         daemon=True).start()
+        threading.Thread(target=monitor_banners,
+                         args=(self.stop, self.tracker_events, self.tracker_game_window, crop_rect),
                          daemon=True).start()
         threading.Thread(target=self.community.run, args=(self.stop,), daemon=True).start()
         root.after(33, self.update)
@@ -843,6 +854,74 @@ class Radar:
                 table.insert("end", "Пока нет наблюдений.")
         dialog.lift()
 
+    def tracker_game_window(self):
+        return None if self.options["paused"] else fortnite_window()
+
+    def show_tracker(self):
+        if self.tracker_window is not None and self.tracker_window.winfo_exists():
+            self.tracker_window.deiconify()
+            self.tracker_window.lift()
+            return
+        dialog = self.tracker_window = tk.Toplevel(self.root)
+        dialog.title("Трекер находок")
+        dialog.configure(bg=BG, padx=16, pady=14)
+        dialog.minsize(520, 290)
+        stats = tk.Frame(dialog, bg=BG)
+        stats.pack(fill="x", pady=(0, 12))
+        self.tracker_counts = {}
+        for column, (kind, heading, color) in enumerate(
+            (("chest", "Открыто сундуков", CYAN), ("find", "Найдено находок", GOLD))
+        ):
+            stats.columnconfigure(column, weight=1)
+            tile = tk.Frame(stats, bg="#211633", padx=14, pady=8)
+            tile.grid(row=0, column=column, sticky="ew", padx=(0, 4) if column == 0 else (4, 0))
+            self.tracker_counts[kind] = tk.StringVar(master=dialog)
+            tk.Label(tile, textvariable=self.tracker_counts[kind], bg="#211633", fg=color,
+                     font=(FONT, 24, "bold")).pack(anchor="w")
+            tk.Label(tile, text=heading, bg="#211633", fg=FG, font=(FONT, 10)).pack(anchor="w")
+        journal = tk.Frame(dialog, bg=BG)
+        journal.pack(fill="both", expand=True)
+        scroll = tk.Scrollbar(journal, orient="vertical")
+        self.tracker_rows = tk.Listbox(journal, height=9, bg="#211633", fg=FG, relief="flat",
+                                      highlightthickness=0, font=(FONT, 11), yscrollcommand=scroll.set)
+        scroll.configure(command=self.tracker_rows.yview)
+        scroll.pack(side="right", fill="y")
+        self.tracker_rows.pack(side="left", fill="both", expand=True)
+        self.tracker_hint = tk.StringVar(master=dialog)
+        tk.Label(dialog, textvariable=self.tracker_hint, bg=BG, fg=CYAN, font=(FONT, 9),
+                 anchor="w").pack(fill="x", pady=(8, 0))
+        self.refresh_tracker()
+        dialog.lift()
+
+    def refresh_tracker(self):
+        if self.tracker_window is None or not self.tracker_window.winfo_exists():
+            return
+        for kind, variable in self.tracker_counts.items():
+            variable.set(str(self.tracker.totals[kind]))
+        self.tracker_rows.delete(0, "end")
+        for label, stamp in reversed(self.tracker.rows):
+            self.tracker_rows.insert("end", f"  {stamp.astimezone():%d.%m %H:%M:%S}    {label}")
+        if not self.tracker.rows:
+            self.tracker_rows.insert("end", "  Пока нет распознанных находок.")
+        self.tracker_hint.set(self.tracker.error or self.tracker_status)
+
+    def update_tracker(self, window, now):
+        updated = self.open_tracker.update(window, self.options["live_chest"], now)
+        if updated:
+            self.tracker.add("chest", "Сундук открыт")
+        while True:
+            try:
+                kind, label = self.tracker_events.get_nowait()
+            except Empty:
+                break
+            if kind == "find":
+                self.tracker.add(kind, label)
+            else:
+                self.tracker_status = label
+            updated = True
+        if updated:
+            self.refresh_tracker()
+
     def check_proximity(self, window, distance):
         previous = self.chest_band
         if distance <= 20 or (previous == "close" and distance <= 25):
@@ -880,7 +959,8 @@ class Radar:
         if latest and latest[0] == "error":
             self.error = latest[1]
         active = self.options["enabled"] and not self.options["paused"]
-        window = fortnite_window() if active else None
+        game_window = self.tracker_game_window()
+        window = game_window if active else None
         box_data = None
         if window is None:
             self.cue_hits = 0
@@ -932,12 +1012,13 @@ class Radar:
             self.status.set(self.error)
             if window:
                 self.alert("error", window)
+        now = time.monotonic()
+        self.update_tracker(game_window, now)
         pressed = bool(USER.GetAsyncKeyState(0x77) & 0x8000)  # F8
         if pressed and not self.mark_key_down and window:
             self.mark_opened(window)
         self.mark_key_down = pressed
-        now = time.monotonic()
-        if window is not None and self.observe_visual(window, now):
+        if window is not None and self.prefs["memory"] and self.observe_visual(window, now):
             box_data = None
         direct = window is not None and self.show_latest_chest(window, now)
         if direct:

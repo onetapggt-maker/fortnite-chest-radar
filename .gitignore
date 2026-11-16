@@ -3,4 +3,5 @@ __pycache__/
 *.py[cod]
 *.local.json
 chest-observations.jsonl
+chest-finds.jsonl
 chest-memory.local/
