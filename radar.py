@@ -26,7 +26,7 @@ from radar_visuals import (
 )
 from radar_settings import Settings, clean_preferences
 from chest_cue import chest_cue_position, glowing_container
-from chest_memory import ChestMemory, MAX_MARKERS
+from chest_memory import ChestMemory, LIVE_REGION, MAX_MARKERS
 from community import Community
 
 
@@ -192,6 +192,30 @@ def ignore_markers(bounds, points):
     return mask
 
 
+def monitor_visible_chests(stop, options):
+    memory = ChestMemory(MEMORY_FOLDER)
+    if not memory.references:
+        return
+    with MSS() as capture:
+        while not stop.is_set():
+            active = options["enabled"] and not options["paused"] and options["memory"]
+            window = fortnite_window() if active else None
+            if window is None:
+                options["live_chest"] = None
+                stop.wait(.08)
+                continue
+            captured = time.monotonic()
+            bounds = crop_rect(window, LIVE_REGION)
+            origin = (bounds["left"]-window[0], bounds["top"]-window[1])
+            try:
+                quad = memory.detect_visible(np.asarray(capture.grab(bounds)), window[3], origin)
+            except (ScreenShotError, cv2.error):
+                quad = None
+            if quad is not None:
+                options["live_chest"] = (window, captured, quad)
+            stop.wait(max(0, .075 - (time.monotonic()-captured)))
+
+
 def monitor(stop, events, options):
     try:
         island = Island()
@@ -230,8 +254,8 @@ def monitor(stop, events, options):
                     stop.wait(0.5)
                     continue
                 if result is None:
-                    live = memory.update(game_frame, None, (), cue, options["memory_drawn"]) if options["memory"] else None
-                    events.put(("lost", window, cue, box, live))
+                    options["suppress_live"] = None
+                    events.put(("lost", window, cue, box))
                 else:
                     opened = options["opened"]
                     dots = island.visible_chests(result, bounds["width"], bounds["height"], opened)
@@ -241,6 +265,7 @@ def monitor(stop, events, options):
                     distances = np.linalg.norm(island.points - center, axis=1)
                     nearest = int(distances.argmin())
                     suppressed = nearest in opened and distances[nearest] * METERS_PER_PIXEL <= 11
+                    options["suppress_live"] = (window, nearest) if suppressed else None
                     can_show_cue = cue and not suppressed
                     point_id = unique_nearby_point(distances, opened) if cue else None
                     distances[list(opened)] = np.inf
@@ -250,7 +275,7 @@ def monitor(stop, events, options):
                         nearby = np.flatnonzero(distances * METERS_PER_PIXEL <= 26).tolist()
                         nearby.sort(key=distances.__getitem__)
                         saved_image = memory.update(game_frame, point_id, nearby, can_show_cue,
-                                                    options["memory_drawn"], allow_live=not suppressed)
+                                                    options["memory_drawn"], allow_live=bool(can_show_cue))
                     events.put(("located", window, bounds, dots, north, distance * METERS_PER_PIXEL,
                                 cue if can_show_cue else None,
                                 tuple(round(float(value), 1) for value in center),
@@ -324,6 +349,10 @@ class Radar:
         self.options["boxes"] = self.prefs["boxes"]
         self.options["memory"] = self.prefs["memory"]
         self.options["memory_drawn"] = ()
+        self.options["live_chest"] = None
+        self.options["suppress_live"] = None
+        self.slow_marker = None
+        self.drawn_marker = None
         self.community = Community(self.prefs["share"])
         self.overlay = Layer()
         self.notice = Layer()
@@ -349,6 +378,8 @@ class Radar:
                                 ))
         self.tray.run_detached()
         threading.Thread(target=monitor, args=(self.stop, self.events, self.options),
+                         daemon=True).start()
+        threading.Thread(target=monitor_visible_chests, args=(self.stop, self.options),
                          daemon=True).start()
         threading.Thread(target=self.community.run, args=(self.stop,), daemon=True).start()
         root.after(33, self.update)
@@ -461,6 +492,7 @@ class Radar:
             for layer in self.memory_layers:
                 layer.hide()
             self.options["memory_drawn"] = ()
+        self.drawn_marker = None
 
     def show_memory(self, window, result):
         if not self.prefs["memory"] or result is None:
@@ -479,6 +511,26 @@ class Radar:
             drawn.append((x, y, marker.width, marker.height))
         self.options["memory_drawn"] = tuple(drawn)
         self.memory_until = time.monotonic() + .58
+
+    def show_latest_chest(self, window, now):
+        if not self.prefs["memory"]:
+            return False
+        live = self.options["live_chest"]
+        slow = self.slow_marker
+        suppressed = self.options["suppress_live"]
+        use_live = (live is not None and live[0] == window and now-live[1] < .24 and
+                    not (suppressed and suppressed[0] == window and suppressed[1] in self.options["opened"]))
+        if use_live:
+            marker, result = live, ("live", {None: live[2]})
+        elif slow is not None and slow[0] == window and now-slow[1] < .58:
+            marker, result = slow, slow[2]
+        else:
+            self.clear_memory()
+            return False
+        if marker is not self.drawn_marker:
+            self.show_memory(window, result)
+            self.drawn_marker = marker
+        return use_live or result[0] in ("saved", "live")
 
     def show_detected_chest(self, window, cue, box):
         if not cue or box is None or not self.prefs["boxes"]:
@@ -587,6 +639,8 @@ class Radar:
         closest = min(self.targets, key=lambda key:
                       (self.targets[key][0]-cx)**2 + (self.targets[key][1]-cy)**2)
         self.options["opened"] = (*self.options["opened"], closest)
+        self.options["suppress_live"] = (window, closest)
+        self.options["live_chest"] = None
         self.clear_memory()
         self.closest_distance = float("inf")
         self.targets.pop(closest)
@@ -757,11 +811,13 @@ class Radar:
             self.error = latest[1]
         active = self.options["enabled"] and not self.options["paused"]
         window = fortnite_window() if active else None
+        box_data = None
         if window is None:
             self.cue_hits = 0
             self.hide()
             self.clear_box()
             self.clear_memory()
+            self.slow_marker = None
             self.clear_notice()
             self.lost_signal = False
             self.chest_band = None
@@ -783,21 +839,22 @@ class Radar:
                                      if key not in self.options["opened"]}, north)
                 self.check_proximity(window, distance)
                 self.observe_chest(window, cue, area, point_id)
-                direct = saved_image is not None and saved_image[0] in ("saved", "live")
-                self.show_detected_chest(window, None if direct else cue, box)
-                self.show_memory(window, saved_image)
+                if saved_image and saved_image[0] == "saved":
+                    self.show_feedback(window, "Внешний вид сохранён",
+                                       "Вырез сундука сохранён на этом компьютере")
+                    saved_image = ("live", saved_image[1])
+                self.slow_marker = (window, time.monotonic(), saved_image) if saved_image else None
+                box_data = (cue, box)
             elif state in ("lost", "capture") and args[0] == window:
                 self.hide()
                 self.status.set(ISSUES[state][0])
                 self.alert(state, window)
+                self.slow_marker = None
                 if state == "lost":
                     self.observe_chest(window, args[1])
-                    direct = args[3] is not None and args[3][0] in ("saved", "live")
-                    self.show_detected_chest(window, None if direct else args[1], args[2])
-                    self.show_memory(window, args[3])
+                    box_data = (args[1], args[2])
                 else:
                     self.clear_box()
-                    self.clear_memory()
             elif state in ("ready", "idle") and window is None:
                 self.status.set("Переключись в матч Fortnite")
         if active and self.error:
@@ -808,7 +865,13 @@ class Radar:
         if pressed and not self.mark_key_down and window:
             self.mark_opened(window)
         self.mark_key_down = pressed
-        self.animate(time.monotonic())
+        now = time.monotonic()
+        direct = window is not None and self.show_latest_chest(window, now)
+        if direct:
+            self.clear_box()
+        elif box_data is not None:
+            self.show_detected_chest(window, *box_data)
+        self.animate(now)
         self.root.after(33, self.update)
 
     def reset(self):

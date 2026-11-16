@@ -7,6 +7,7 @@ import numpy as np
 
 
 MAX_MARKERS = 3
+LIVE_REGION = (.25, .20, .75, .83)
 
 
 class ChestMemory:
@@ -31,6 +32,27 @@ class ChestMemory:
         if descriptors is None:
             return None
         return np.float32([point.pt for point in keypoints]), descriptors, gray.shape
+
+    def find_reference(self, current, minimum):
+        if current is None:
+            return None
+        for reference in self.references:
+            height, width = reference[2]
+            visible = self.project(reference, current, (0, 0, width, height), minimum)
+            if visible is not None:
+                return visible
+        return None
+
+    def detect_visible(self, cropped_frame, height, origin):
+        if not self.references:
+            return None
+        ratio = 540 / height
+        gray = cv2.cvtColor(cropped_frame[:, :, :3], cv2.COLOR_BGR2GRAY)
+        gray = cv2.resize(gray, None, fx=ratio, fy=ratio, interpolation=cv2.INTER_AREA)
+        quad = self.find_reference(self.features(gray), 12)
+        if quad is None:
+            return None
+        return quad / ratio + np.float32(origin)
 
     def project(self, reference, current, rectangle, minimum, anchored=False):
         source, source_descriptors, _ = reference
@@ -165,14 +187,10 @@ class ChestMemory:
             return ("images", visible_points)
         if can_recognize:
             current = self.features(gray, mask) if overlays else current
-            if current is None:
-                return None
-            for reference in self.references:
-                rh, rw = reference[2]
-                visible = self.project(reference, current, (0, 0, rw, rh), 9 if cue else 12)
-                if visible is not None:
-                    images = {point: visible / ratio}
-                    if point is not None and self.remember(point, resized, gray, visible):
-                        return ("saved", images)
-                    return ("live", images)
+            visible = self.find_reference(current, 9 if cue else 12)
+            if visible is not None:
+                images = {point: visible / ratio}
+                if point is not None and self.remember(point, resized, gray, visible):
+                    return ("saved", images)
+                return ("live", images)
         return None
