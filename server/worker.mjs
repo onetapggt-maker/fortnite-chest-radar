@@ -1,6 +1,5 @@
 const VERSION = "43.10";
 const POINT_COUNT = 965;
-const HOURS = 24 * 7;
 const HEADERS = {
   "Access-Control-Allow-Origin": "*",
   "X-Content-Type-Options": "nosniff",
@@ -49,8 +48,8 @@ export default {
     const hour = Math.floor(Date.now() / 3600000);
     if (request.method === "GET") {
       const { results } = await env.DB.prepare(
-        "SELECT point_id, COUNT(*) AS observations FROM sightings WHERE hour_bucket > ? GROUP BY point_id ORDER BY point_id",
-      ).bind(hour - HOURS).all();
+        "SELECT point_id, observations FROM remembered_chests ORDER BY point_id",
+      ).all();
       return json({ version: VERSION, points: results }, 200, {
         "Cache-Control": "public, max-age=60",
       });
@@ -62,10 +61,14 @@ export default {
       return json({ error: "invalid_observation" }, 400);
     }
     // One anonymous observation per known point per hour. No device identifier or IP is stored.
-    await env.DB.batch([
-      env.DB.prepare("INSERT OR IGNORE INTO sightings(point_id, hour_bucket) VALUES (?, ?)").bind(body.point_id, hour),
-      env.DB.prepare("DELETE FROM sightings WHERE hour_bucket <= ?").bind(hour - HOURS),
-    ]);
+    await env.DB.prepare(`
+      INSERT INTO remembered_chests(point_id, observations, last_seen_hour)
+      VALUES (?, 1, ?)
+      ON CONFLICT(point_id) DO UPDATE SET
+        observations = remembered_chests.observations + 1,
+        last_seen_hour = excluded.last_seen_hour
+      WHERE remembered_chests.last_seen_hour < excluded.last_seen_hour
+    `).bind(body.point_id, hour).run();
     return json({ accepted: true }, 202, { "Cache-Control": "no-store" });
   },
 };

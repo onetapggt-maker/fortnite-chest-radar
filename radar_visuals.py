@@ -133,7 +133,7 @@ def chest_symbol(draw, x, y, size, color, line):
 @lru_cache(maxsize=32)
 def container_marker(width, height, reported=False):
     pad = 12
-    label = "Точка отмечена игроками" if reported else "Возможный сундук"
+    label = "Запомненный сундук" if reported else "Возможный сундук"
     accent = "#d7a9ff" if reported else "#b3f5ff"
     face = font(12, True)
     label_width = round(face.getlength(label)) + 34

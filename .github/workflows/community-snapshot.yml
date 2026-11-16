@@ -33,7 +33,7 @@ jobs:
             throw new Error("Invalid observation feed");
           const points = data.points.map(({ point_id, observations }) => {
             if (!Number.isInteger(point_id) || point_id < 0 || point_id >= 965 ||
-                !Number.isInteger(observations) || observations < 1 || observations > 168)
+                !Number.isSafeInteger(observations) || observations < 1)
               throw new Error("Invalid observation entry");
             return { point_id, observations };
           });

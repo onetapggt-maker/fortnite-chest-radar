@@ -17,7 +17,7 @@ const layers = {
   chest: { label: "Обычные", color: "#ffd476", points: [] },
   rare_chest: { label: "Редкие", color: "#62e5ff", points: [] },
   buried_chest: { label: "Закопанные", color: "#f3a9a0", points: [] },
-  community: { label: "Отмечены игроками", color: "#daabff", points: [] },
+  community: { label: "Запомненные сундуки", color: "#daabff", points: [] },
   sightings: { label: "Наблюдения", color: "#c788ff", points: [] },
 };
 let data;
@@ -87,7 +87,7 @@ async function communityObservations() {
       layers.community.points = Array.from(ids, id => numberedChests[id]);
       controls.community.count.textContent = ids.size;
       label.textContent = url === communityApi
-        ? `Автоматические отметки за 7 дней: ${ids.size}`
+        ? `Запомнено на этой версии карты: ${ids.size}`
         : `Резервная копия GitHub: ${ids.size} отметок`;
       draw();
       return;
@@ -95,7 +95,7 @@ async function communityObservations() {
       // Try the GitHub snapshot when the live service cannot be reached.
     }
   }
-  label.textContent = "Автоматические отметки пока недоступны.";
+  label.textContent = "Список запомненных точек пока недоступен.";
 }
 
 function initLayers() {
