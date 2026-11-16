@@ -20,7 +20,8 @@ from PIL import Image, ImageDraw, ImageTk
 import pystray
 
 from radar_visuals import (
-    GLOW_RADIUS, NOTICE_SIZE, Layer, saved_chest_marker, radar_frame, notice_card, preview_base,
+    GLOW_RADIUS, NOTICE_SIZE, Layer, directional_chest_marker, saved_chest_marker, radar_frame,
+    notice_card, preview_base,
     preview_frame,
 )
 from radar_settings import Settings, clean_preferences
@@ -471,7 +472,7 @@ class Radar:
             if index >= len(visible):
                 layer.hide()
                 continue
-            (x, y), marker = saved_chest_marker(visible[index])
+            (x, y), marker = saved_chest_marker(visible[index], window[3])
             layer.draw(marker, window[0]+x, window[1]+y)
             drawn.append((x, y, marker.width, marker.height))
         self.options["memory_drawn"] = tuple(drawn)
@@ -487,6 +488,8 @@ class Radar:
             abs(value-old) <= max(12, min(box[2:])*.25) for value, old in zip(box, previous)
         ):
             x, y, width, height = box
+            quad = np.float32([[x, y], [x+width, y], [x+width, y+height], [x, y+height]])
+            (left, top), marker = saved_chest_marker(quad, window[3])
         else:
             # Extend the game cue radially to keep its glyph visible and avoid
             # feeding our own marker back into the chest detector.
@@ -497,9 +500,8 @@ class Radar:
             offset = size * 1.2
             x = cue[0] + dx / length * offset - size / 2
             y = cue[1] + dy / length * offset - size / 2
-            width = height = size
-        quad = np.float32([[x, y], [x+width, y], [x+width, y+height], [x, y+height]])
-        (left, top), marker = saved_chest_marker(quad)
+            quad = np.float32([[x, y], [x+size, y], [x+size, y+size], [x, y+size]])
+            (left, top), marker = directional_chest_marker(quad)
         self.box_overlay.draw(marker, window[0]+left, window[1]+top)
         self.box_until = time.monotonic() + .55
 

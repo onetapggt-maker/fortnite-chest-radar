@@ -148,13 +148,31 @@ def red_cube():
     return np.asarray(image)
 
 
-def saved_chest_marker(quad):
+def directional_chest_marker(quad):
     x, y, width, height = cv2.boundingRect(quad)
     cube = red_cube()
     sh, sw = cube.shape[:2]
     source = np.float32([[0, 0], [sw-1, 0], [sw-1, sh-1], [0, sh-1]])
     transform = cv2.getPerspectiveTransform(source, quad - np.float32([x, y]))
     return (x, y), Image.fromarray(cv2.warpPerspective(cube, transform, (width, height)))
+
+
+@lru_cache(maxsize=48)
+def chest_square(side):
+    image = Image.new("RGBA", (side, side))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((1, 1, side-2, side-2), fill=(255, 32, 45, 35),
+                   outline=(255, 32, 48, 245), width=max(3, round(side*.024)))
+    return image
+
+
+def saved_chest_marker(quad, viewport_height):
+    left, top = quad.min(axis=0)
+    right, bottom = quad.max(axis=0)
+    side = round(max(viewport_height*.11, max(right-left, bottom-top)*1.20))
+    x = round((left+right-side)/2)
+    y = round((top+bottom-side)/2)
+    return (x, y), chest_square(side)
 
 
 @lru_cache(maxsize=80)

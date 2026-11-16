@@ -143,7 +143,10 @@ class ChestMemory:
         scene_mask = mask.copy() if overlays else mask
         for overlay in overlays:
             x, y, w, h = (round(value*ratio) for value in overlay)
-            scene_mask[max(0,y):max(0,y+h), max(0,x):max(0,x+w)] = 0
+            # The square's center is translucent. Keep its background detail
+            # available and filter only the strong red frame from scene matching.
+            cv2.rectangle(scene_mask, (x, y), (x+w-1, y+h-1), 0,
+                          thickness=max(4, round(w*.045)))
         current = self.features(gray, scene_mask) if known or not overlays else None
         # The global cue says a chest is nearby, but does not prove it is visible.
         visible_points = {}
