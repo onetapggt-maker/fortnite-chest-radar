@@ -168,6 +168,20 @@ def chest_beam(quad, viewport_width, viewport_height):
     return (left + inset, 0), image
 
 
+def chest_outline(quad, viewport_width, viewport_height):
+    padding = max(3, round(viewport_height * .004))
+    left = max(0, math.floor(quad[:, 0].min()) - padding)
+    top = max(0, math.floor(quad[:, 1].min()) - padding)
+    right = min(viewport_width, math.ceil(quad[:, 0].max()) + padding + 1)
+    bottom = min(viewport_height, math.ceil(quad[:, 1].max()) + padding + 1)
+    image = Image.new("RGBA", (right-left, bottom-top))
+    path = [(round(x)-left, round(y)-top) for x, y in quad]
+    draw = ImageDraw.Draw(image)
+    draw.polygon(path, fill=(255, 22, 43, 28))
+    draw.line(path + path[:1], fill=(255, 35, 58, 255), width=padding, joint="curve")
+    return (left, top), image
+
+
 @lru_cache(maxsize=80)
 def marker_sprite(phase, size=5, icon=True):
     size = GLOW_RADIUS * 2 + 1
@@ -226,6 +240,26 @@ def glowing_markers(width, height, points, t, size=5, glow=True, icon=True, repo
 def font(size, bold=False):
     path = Path(os.environ["WINDIR"]) / "Fonts" / ("segoeuib.ttf" if bold else "segoeui.ttf")
     return ImageFont.truetype(str(path), size)
+
+
+@lru_cache(maxsize=40)
+def opened_counter_card(count, theme, height):
+    accent, _, _ = THEMES[theme]
+    scale = 3
+    count_text = str(count)
+    count_font = font(18 * scale, True)
+    label = "Открыто сундуков"
+    label_font = font(12 * scale, True)
+    width = max(182 * scale, 56 * scale + math.ceil(
+        label_font.getlength(label) + count_font.getlength(count_text)))
+    image = Image.new("RGBA", (width, 33 * scale))
+    draw = ImageDraw.Draw(image)
+    draw.rounded_rectangle((0, 0, width-1, image.height-1), radius=8*scale,
+                           fill=(20, 14, 34, 235), outline=accent, width=scale)
+    chest_symbol(draw, 17*scale, 15*scale, 6*scale, accent, scale)
+    draw.text((32*scale, 16*scale), label, font=label_font, fill="#f6edff", anchor="lm")
+    draw.text((width-10*scale, 16*scale), count_text, font=count_font, fill=accent, anchor="rm")
+    return image.resize((round(width * height / image.height), height), Image.Resampling.LANCZOS)
 
 
 def notice_card(title, hint, kind="lost"):

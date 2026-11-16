@@ -20,15 +20,15 @@ from PIL import Image, ImageDraw, ImageTk
 import pystray
 
 from radar_visuals import (
-    GLOW_RADIUS, NOTICE_SIZE, Layer, chest_beam, radar_frame,
-    notice_card, preview_base,
+    GLOW_RADIUS, NOTICE_SIZE, Layer, chest_beam, chest_outline, radar_frame,
+    notice_card, opened_counter_card, preview_base,
     preview_frame,
 )
 from radar_settings import Settings, clean_preferences
 from chest_cue import chest_cue_position, glowing_container
 from chest_memory import ChestMemory, LIVE_REGION, MAX_MARKERS
 from community import Community
-from find_tracker import OpenTracker, TrackerLog, monitor_banners
+from find_tracker import ChestTracker, TrackerLog, monitor_banners
 
 
 HERE = Path(__file__).resolve().parent
@@ -315,6 +315,12 @@ def same_chest(chest, lid):
     return np.all(center >= chest.min(axis=0) - margin) and np.all(center <= chest.max(axis=0) + margin)
 
 
+def linked_chest_point(window, captured, link):
+    if link and link[0] == window and abs(captured-link[1]) <= .65:
+        return link[2]
+    return None
+
+
 class Radar:
     def __init__(self, root):
         self.root = root
@@ -351,7 +357,7 @@ class Radar:
         self.marked_chests = set()
         self.handled_visual = 0.0
         self.pending_open = None
-        self.open_tracker = OpenTracker(same_chest)
+        self.chest_tracker = ChestTracker(same_chest)
         self.tracker = TrackerLog(TRACKER_LOG)
         self.tracker_events = Queue()
         self.tracker_status = "Запускаю распознавание баннеров…"
@@ -384,6 +390,8 @@ class Radar:
         self.drawn_marker = None
         self.community = Community(self.prefs["share"])
         self.overlay = Layer()
+        self.counter_overlay = Layer()
+        self.counter_position = None
         self.notice = Layer()
         self.box_overlay = Layer()
         self.memory_layers = [Layer() for _ in range(MAX_MARKERS)]
@@ -482,6 +490,7 @@ class Radar:
             self.save_preferences()
         self.tray.stop()
         self.overlay.close()
+        self.counter_overlay.close()
         self.notice.close()
         self.box_overlay.close()
         for layer in self.memory_layers:
@@ -516,6 +525,27 @@ class Radar:
         self.targets = dots
         self.north = north
 
+    def show_opened_counter(self, window):
+        if window is None:
+            self.counter_overlay.hide()
+            self.counter_position = None
+            return
+        x, y, width, height = window
+        bounds = self.mark_bounds or crop_rect(window, self.options["region"] or next(defaults(window)))
+        counter_height = min(46, max(26, round(height * .031)))
+        counter_style = (self.tracker.totals["chest"], self.prefs["theme"], counter_height)
+        card = opened_counter_card(*counter_style)
+        centered = bounds["left"] + (bounds["width"] - card.width) // 2
+        left = max(x, min(centered, x + width - card.width))
+        gap = max(5, counter_height // 5)
+        top = bounds["top"] + bounds["height"] + gap
+        if top + counter_height > y + height:
+            top = max(y, bounds["top"] - counter_height - gap)
+        position = (*counter_style, left, top)
+        if position != self.counter_position:
+            self.counter_overlay.draw(card, left, top)
+            self.counter_position = position
+
     def clear_box(self):
         self.box_overlay.hide()
         self.last_box = None
@@ -534,13 +564,14 @@ class Radar:
             return
         if result[0] == "saved":
             self.show_feedback(window, "Внешний вид сохранён", "Вырез сундука сохранён на этом компьютере")
+        draw_marker = chest_outline if result[0] in ("live", "saved") else chest_beam
         visible = [quad for point, quad in result[1].items() if point not in self.options["opened"]]
         drawn = []
         for index, layer in enumerate(self.memory_layers):
             if index >= len(visible):
                 layer.hide()
                 continue
-            (x, y), marker = chest_beam(visible[index], *window[2:])
+            (x, y), marker = draw_marker(visible[index], *window[2:])
             layer.draw(marker, window[0]+x, window[1]+y)
             drawn.append((x, y, marker.width, marker.height))
         self.options["memory_drawn"] = tuple(drawn)
@@ -665,6 +696,7 @@ class Radar:
 
     def reset_opened(self):
         self.options["opened"] = ()
+        self.chest_tracker.reset_points()
         self.marked_chests.clear()
         self.pending_open = None
         self.chest_band = None
@@ -699,8 +731,7 @@ class Radar:
         if not live or live[0] != window or live[1] <= self.handled_visual or now-live[1] > .5:
             return False
         captured, state, lid = live[1:]
-        link = self.options["map_link"]
-        point = link[2] if link and link[0] == window and abs(captured-link[1]) <= .65 else None
+        point = linked_chest_point(window, captured, self.options["map_link"])
         slow = self.slow_marker
         if state == "open" and slow and slow[0] == window and abs(captured-slow[1]) <= .4:
             matches = [point for point, quad in slow[2][1].items()
@@ -906,9 +937,14 @@ class Radar:
         self.tracker_hint.set(self.tracker.error or self.tracker_status)
 
     def update_tracker(self, window, now):
-        updated = self.open_tracker.update(window, self.options["live_chest"], now)
+        sample = self.options["live_chest"]
+        suppressed = self.options["suppress_live"]
+        if suppressed and suppressed[0] == window and suppressed[1] in self.options["opened"]:
+            sample = None
+        point = linked_chest_point(window, sample[1], self.options["map_link"]) if sample else None
+        updated = self.chest_tracker.update(window, sample, point, now)
         if updated:
-            self.tracker.add("chest", "Сундук открыт")
+            self.tracker.add("chest", "Сундук замечен")
         while True:
             try:
                 kind, label = self.tracker_events.get_nowait()
@@ -1014,6 +1050,7 @@ class Radar:
                 self.alert("error", window)
         now = time.monotonic()
         self.update_tracker(game_window, now)
+        self.show_opened_counter(window)
         pressed = bool(USER.GetAsyncKeyState(0x77) & 0x8000)  # F8
         if pressed and not self.mark_key_down and window:
             self.mark_opened(window)

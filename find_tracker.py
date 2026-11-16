@@ -1,4 +1,4 @@
-"""Count chest openings and read the game's yellow find announcements."""
+"""Count recognised chests and read the game's yellow find announcements."""
 
 from collections import Counter, deque
 from datetime import datetime, timezone
@@ -85,36 +85,38 @@ class BannerTracker:
         return name
 
 
-class OpenTracker:
+class ChestTracker:
     def __init__(self, same_chest):
         self.same_chest = same_chest
-        self.closed = None
-        self.opened_once = False
         self.last_sample = 0
+        self.recent = None
+        self.counted_points = set()
 
-    def update(self, window, sample, now):
-        if window is None:
-            self.closed = None
-            self.opened_once = False
+    def reset_points(self):
+        self.recent = None
+        self.counted_points.clear()
+
+    def update(self, window, sample, point, now):
+        if window is None or not sample or sample[0] != window:
             return False
-        if not sample or sample[0] != window or sample[1] <= self.last_sample or now - sample[1] > .5:
+        if sample[1] <= self.last_sample or now - sample[1] > .5:
             return False
         _, captured, state, quad = sample
         self.last_sample = captured
-        if state == "closed":
-            self.closed = (captured, quad)
-            self.opened_once = False
+        if state != "closed":
             return False
-        if self.closed is None or captured - self.closed[0] > 1.5:
-            return False
-        if not self.same_chest(self.closed[1], quad):
-            return False
-        if self.opened_once:
-            self.closed = None
-            self.opened_once = False
-            return True
-        self.opened_once = True
-        return False
+        prior = self.recent
+        same_track = False
+        if prior and prior[0] == window and not (point is not None and prior[3] not in (None, point)):
+            elapsed = captured - prior[1]
+            same_track = elapsed <= .6 or (elapsed <= 4 and self.same_chest(prior[2], quad))
+        if same_track and point is None:
+            point = prior[3]
+        self.recent = (window, captured, quad, point)
+        counted = point in self.counted_points
+        if point is not None:
+            self.counted_points.add(point)
+        return not same_track and not counted
 
 
 class TrackerLog:
