@@ -31,10 +31,24 @@ def banner_crop(frame):
         frame = cv2.resize(frame, (round(width*scale), round(height*scale)), interpolation=cv2.INTER_AREA)
     hsv = cv2.cvtColor(frame[:, :, :3], cv2.COLOR_BGR2HSV)
     yellow = cv2.inRange(hsv, (13, 95, 155), (39, 255, 255))
+    purple = cv2.inRange(hsv, (124, 38, 155), (169, 255, 255))
     inset = yellow.shape[1] // 5
-    if cv2.countNonZero(yellow[:, inset:-inset]) < 22:
+    if cv2.countNonZero(yellow[:, inset:-inset]) < 22 and cv2.countNonZero(purple) < 22:
         return None
-    return cv2.cvtColor(frame[:, :, :3], cv2.COLOR_BGR2GRAY), yellow
+    return cv2.cvtColor(frame[:, :, :3], cv2.COLOR_BGR2GRAY), yellow, purple
+
+
+def colored_line(record, mask, minimum):
+    x, y, right, bottom = (max(0, round(value)) for value in record["box"])
+    region = mask[y:bottom, x:right]
+    return bool(region.size and cv2.countNonZero(region) >= max(12, region.size * minimum))
+
+
+def chest_award(lines, purple):
+    # The XP toast uses a short, purple «СУНДУК» line. Ordinary objective
+    # descriptions and the on-screen search prompt have different text.
+    return any(row["text"].upper().strip(' «»“”"!.') == "СУНДУК"
+               and colored_line(row, purple, .09) for row in lines)
 
 
 def find_name(lines, yellow):
@@ -44,9 +58,7 @@ def find_name(lines, yellow):
         match = BANNER_TITLE.fullmatch(line)
         if not match and line != "ПИРАТСКИЙ ЖЕТОН":
             continue
-        x, y, right, bottom = (max(0, round(value)) for value in record["box"])
-        region = yellow[y:bottom, x:right]
-        if not region.size or cv2.countNonZero(region) < max(12, region.size * .045):
+        if not colored_line(record, yellow, .045):
             continue
         if not match:
             return "Пиратский жетон"
@@ -91,9 +103,11 @@ class ChestTracker:
         self.last_sample = 0
         self.recent = None
         self.counted_points = set()
+        self.last_cue = None
 
     def reset_points(self):
         self.recent = None
+        self.last_cue = None
         self.counted_points.clear()
 
     def update(self, window, sample, point, now):
@@ -105,13 +119,42 @@ class ChestTracker:
         self.last_sample = captured
         if state != "closed":
             return False
+        return self.sighting(window, captured, quad, point)
+
+    def cue(self, window, sample, now):
+        if not sample or sample[0] != window or now - sample[1] > .9:
+            return False
+        previous = self.last_cue
+        if previous == sample or (previous and sample[1] < previous[1]):
+            return False
+        self.last_cue = sample
+        if not previous or previous[0] != window or previous[2] != sample[2] or sample[1]-previous[1] > 1:
+            return False
+        return self.sighting(window, sample[1], None, sample[2])
+
+    def award(self, window, captured, point):
         prior = self.recent
+        if prior and prior[0] == window and abs(captured-prior[1]) <= 2.5:
+            if point is None or prior[3] in (None, point):
+                if point is not None:
+                    self.counted_points.add(point)
+                return False
+        return self.sighting(window, captured, None, point)
+
+    def sighting(self, window, captured, quad, point):
+        prior = self.recent
+        if prior and prior[0] == window and captured < prior[1]:
+            return False
         same_track = False
         if prior and prior[0] == window and not (point is not None and prior[3] not in (None, point)):
             elapsed = captured - prior[1]
-            same_track = elapsed <= .6 or (elapsed <= 4 and self.same_chest(prior[2], quad))
-        if same_track and point is None:
-            point = prior[3]
+            if quad is None or prior[2] is None:
+                same_track = elapsed <= 2.5
+            else:
+                same_track = elapsed <= .6 or (elapsed <= 4 and self.same_chest(prior[2], quad))
+        if same_track:
+            point = point if point is not None else prior[3]
+            quad = quad if quad is not None else prior[2]
         self.recent = (window, captured, quad, point)
         counted = point in self.counted_points
         if point is not None:
@@ -163,6 +206,7 @@ def monitor_banners(stop, events, active_window, crop_rect):
     script = Path(__file__).with_name("find_ocr.ps1")
     powershell = Path(os.environ["WINDIR"]) / "System32/WindowsPowerShell/v1.0/powershell.exe"
     banner = BannerTracker()
+    last_award = float("-inf")
     process = None
     try:
         process = subprocess.Popen(
@@ -177,30 +221,38 @@ def monitor_banners(stop, events, active_window, crop_rect):
                        if ready == "no-russian-ocr" else "Не удалось включить распознавание баннеров.")
             events.put(("status", message))
             return
-        events.put(("status", "Распознавание жёлтых баннеров включено."))
+        events.put(("status", "Распознавание находок и уведомлений о сундуках включено."))
         with MSS() as capture:
             while not stop.is_set():
                 start = time.monotonic()
                 window = active_window()
                 name = None
+                award = False
                 if window is not None:
                     try:
                         frame = banner_crop(np.asarray(capture.grab(crop_rect(window, BANNER_REGION))))
                     except (ScreenShotError, cv2.error):
                         frame = None
                     if frame is not None:
-                        gray, yellow = frame
+                        gray, yellow, purple = frame
                         ok, encoded = cv2.imencode(".png", gray, [cv2.IMWRITE_PNG_COMPRESSION, 1])
                         if ok:
                             process.stdin.write(base64.b64encode(encoded).decode("ascii") + "\n")
                             process.stdin.flush()
                             reply = process.stdout.readline()
-                            if not reply or reply.strip() == "ocr-error":
+                            if not reply:
                                 raise OSError("Windows OCR failed")
-                            name = find_name(json.loads(reply), yellow)
+                            if reply.strip() != "ocr-error":
+                                lines = json.loads(reply)
+                                name = find_name(lines, yellow)
+                                award = chest_award(lines, purple)
                 label = banner.update(name, start)
                 if label:
                     events.put(("find", label))
+                if award:
+                    if start - last_award > 1.2:
+                        events.put(("chest_award", (window, start)))
+                    last_award = start
                 stop.wait(max(0, .17 - (time.monotonic()-start)))
     except (OSError, ValueError, ScreenShotError):
         events.put(("status", "Распознавание баннеров недоступно."))

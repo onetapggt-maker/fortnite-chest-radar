@@ -230,6 +230,7 @@ def monitor(stop, events, options):
                 window = fortnite_window() if active else None
                 if window is None:
                     options["map_link"] = None
+                    options["tracker_cue"] = None
                     events.put(("idle",))
                     stop.wait(0.25)
                     continue
@@ -256,11 +257,13 @@ def monitor(stop, events, options):
                             break
                 except ScreenShotError:
                     options["map_link"] = None
+                    options["tracker_cue"] = None
                     events.put(("capture", window))
                     stop.wait(0.5)
                     continue
                 if result is None:
                     options["map_link"] = None
+                    options["tracker_cue"] = None
                     options["suppress_live"] = None
                     events.put(("lost", window, cue, box))
                 else:
@@ -276,6 +279,8 @@ def monitor(stop, events, options):
                     can_show_cue = cue and not suppressed
                     linked_point = unique_nearby_point(distances, opened)
                     options["map_link"] = (window, captured, linked_point)
+                    options["tracker_cue"] = ((window, captured, linked_point)
+                                              if can_show_cue and linked_point is not None else None)
                     point_id = linked_point if can_show_cue else None
                     distances[list(opened)] = np.inf
                     distance = distances.min()
@@ -385,6 +390,7 @@ class Radar:
         self.options["memory_drawn"] = ()
         self.options["live_chest"] = None
         self.options["map_link"] = None
+        self.options["tracker_cue"] = None
         self.options["suppress_live"] = None
         self.slow_marker = None
         self.drawn_marker = None
@@ -943,8 +949,12 @@ class Radar:
             sample = None
         point = linked_chest_point(window, sample[1], self.options["map_link"]) if sample else None
         updated = self.chest_tracker.update(window, sample, point, now)
+        cue_counted = self.chest_tracker.cue(window, self.options["tracker_cue"], now)
         if updated:
             self.tracker.add("chest", "Сундук замечен")
+        if cue_counted:
+            self.tracker.add("chest", "Распознан значок сундука")
+            updated = True
         while True:
             try:
                 kind, label = self.tracker_events.get_nowait()
@@ -952,6 +962,11 @@ class Radar:
                 break
             if kind == "find":
                 self.tracker.add(kind, label)
+            elif kind == "chest_award":
+                award_window, captured = label
+                point = linked_chest_point(award_window, captured, self.options["map_link"])
+                if self.chest_tracker.award(award_window, captured, point):
+                    self.tracker.add("chest", "Игра показала опыт за сундук")
             else:
                 self.tracker_status = label
             updated = True
