@@ -18,6 +18,28 @@ def cue_templates():
                  for scale in (.70, .82, .94, 1.06, 1.18, 1.31))
 
 
+def cue_lighting(patch, light, glyph, score):
+    inside = glyph > 195
+    outside = glyph < 20
+    brightness = light[inside].mean()
+    contrast = brightness - light[outside].mean()
+    blue, green, red = np.moveaxis(patch.astype(np.int16), -1, 0)
+    red_blue = red - blue
+    green_blue = green - blue
+    warm = (red_blue > 37) & (green_blue > 17) & (red > 84)
+    if brightness > 142 and contrast > 33 and warm[outside].mean() > .27:
+        return True
+
+    # The icon's light fill is a local white reference. Subtracting its
+    # color cast keeps the gold test usable under a purple screen tint.
+    blue_cast = -float(np.median(green_blue[inside]))
+    if score < .855 or blue_cast < 12 or brightness < 93 or contrast < 17:
+        return False
+    relative_gold = ((red_blue - np.median(red_blue[inside]) > 19) &
+                     (green_blue + blue_cast > 9))
+    return relative_gold[outside].mean() > .24
+
+
 def chest_cue(frame):
     height, width = frame.shape[:2]
     if height < 100 or width < 100:
@@ -40,15 +62,9 @@ def chest_cue(frame):
             _, score, _, (x, y) = cv2.minMaxLoc(scores)
             if score < .84:
                 break
-            patch = band[y:y+th, x:x+tw].astype(np.int16)
+            patch = band[y:y+th, x:x+tw]
             light = gray[y:y+th, x:x+tw]
-            inside = glyph > 195
-            outside = glyph < 20
-            blue, green, red = np.moveaxis(patch, -1, 0)
-            warm = (red - blue > 37) & (green - blue > 17) & (red > 84)
-            if (light[inside].mean() > 142 and
-                    light[inside].mean() - light[outside].mean() > 33 and
-                    warm[outside].mean() > .27):
+            if cue_lighting(patch, light, glyph, score):
                 return True
             scores[max(0,y-5):y+6, max(0,x-5):x+6] = -1
     return False
@@ -63,11 +79,14 @@ def glowing_container(frame):
     region = cv2.resize(region, None, fx=factor, fy=factor, interpolation=cv2.INTER_AREA)
     hsv = cv2.cvtColor(region, cv2.COLOR_BGR2HSV)
     gold = cv2.inRange(hsv, (18, 95, 175), (37, 255, 255)) > 0
-    if not gold.any():
-        return None
-
     gray = cv2.cvtColor(region, cv2.COLOR_BGR2GRAY)
-    edges = cv2.Canny(gray, 45, 110)
+    blue, green, red = np.moveaxis(region.astype(np.int16), -1, 0)
+    red_blue = red - blue
+    green_blue = green - blue
+    storm = np.mean(green_blue < -14) > .25
+    if not gold.any() and not storm:
+        return None
+    edges = cv2.Canny(gray, 30, 73) if storm else cv2.Canny(gray, 45, 110)
     edges = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
     contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
     best = None
@@ -89,6 +108,17 @@ def glowing_container(frame):
         rim = gold[y-pad:y+h+pad, x-pad:x+w+pad]
         inside = gold[y:y+h, x:x+w].mean()
         band = ((rim.sum() - gold[y:y+h, x:x+w].sum()) / (rim.size - w*h))
+        if storm and band < .10:
+            # Compare the perimeter to the center of the crate. A screen-wide
+            # tint lifts both equally, while a glow still lifts green and red.
+            border = np.ones(rim.shape, dtype=bool)
+            border[pad:pad+h, pad:pad+w] = False
+            outer = np.s_[y-pad:y+h+pad, x-pad:x+w+pad]
+            core = np.s_[y+h//4:y+3*h//4, x+w//4:x+3*w//4]
+            warm_halo = ((red_blue[outer] - np.median(red_blue[core]) > 18) &
+                         (green_blue[outer] - np.median(green_blue[core]) > 13) &
+                         (gray[outer] - np.median(gray[core]) > 18))
+            band = warm_halo[border].mean()
         # Wood may be warm throughout. Look for brighter gold around its outline.
         if band < .10 or band < inside * .7:
             continue

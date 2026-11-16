@@ -282,6 +282,10 @@ class Radar:
         self.last_cue = 0.0
         self.cue_saved = False
         self.cue_uploaded = False
+        self.cue_point = None
+        self.cue_candidate = None
+        self.cue_point_hits = 0
+        self.recent_sightings = {}
         self.points = {}
         self.demo_index = 0
         self.demo_start = time.monotonic()
@@ -550,32 +554,59 @@ class Radar:
 
     def observe_chest(self, window, present, area=None, point_id=None):
         now = time.monotonic()
-        if not present:
+        gap = now - self.last_cue
+        if gap > .85:
             self.cue_hits = 0
-            if now - self.last_cue > 1.5:
-                self.cue_saved = False
-                self.cue_uploaded = False
+            self.cue_candidate = None
+            self.cue_point_hits = 0
+        if gap > 1.5:
+            self.cue_saved = False
+            self.cue_uploaded = False
+            self.cue_point = None
+        if not present:
             return
         self.last_cue = now
         self.cue_hits += 1
         if self.cue_hits < 2:
+            self.cue_candidate = point_id
+            self.cue_point_hits = 1 if point_id is not None else 0
             return
-        if point_id is not None and not self.cue_uploaded and self.community.enabled:
-            self.community.submit(point_id)
-            self.cue_uploaded = True
-        if self.cue_saved:
+        if point_id != self.cue_candidate:
+            self.cue_candidate = point_id
+            self.cue_point_hits = 1 if point_id is not None else 0
+        elif point_id is not None:
+            self.cue_point_hits += 1
+        if point_id is not None and self.cue_point_hits >= 2 and point_id != self.cue_point:
+            if self.cue_point is not None:
+                # The cue can stay on screen between two nearby chests.
+                self.cue_saved = False
+                self.cue_uploaded = False
+            self.cue_point = point_id
+            if now - self.recent_sightings.get(point_id, float("-inf")) < 12:
+                self.cue_saved = True
+                self.cue_uploaded = True
+            elif self.cue_saved:
+                self.recent_sightings[point_id] = now
+        confirmed = self.cue_point if self.cue_point == point_id else None
+        if not self.cue_saved and self.cue_point is not None and confirmed is None:
             return
-        item = {"seen_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                "map_version": "43.10", "player_area_on_map": area}
-        try:
-            with OBSERVATIONS.open("a", encoding="utf-8") as history:
-                history.write(json.dumps(item) + "\n")
-        except OSError:
+        if not self.cue_saved:
+            item = {"seen_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "map_version": "43.10", "player_area_on_map": area, "point_id": confirmed}
+            try:
+                with OBSERVATIONS.open("a", encoding="utf-8") as history:
+                    history.write(json.dumps(item) + "\n")
+            except OSError:
+                self.show_feedback(window, "Не удалось сохранить", "Проверь доступ к папке радара")
+                self.cue_saved = True
+                return
             self.cue_saved = True
-            self.show_feedback(window, "Не удалось сохранить", "Проверь доступ к папке радара")
-            return
-        self.cue_saved = True
-        self.show_feedback(window, "Сундук замечен", "Наблюдение добавлено в список")
+            if confirmed is not None:
+                self.recent_sightings[confirmed] = now
+            self.show_feedback(window, "Сундук замечен", "Наблюдение добавлено в список")
+        if confirmed is not None and not self.cue_uploaded and self.community.enabled:
+            self.community.submit(confirmed)
+            self.cue_uploaded = True
 
     def show_observations(self):
         dialog = tk.Toplevel(self.root)
