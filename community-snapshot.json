@@ -2,8 +2,368 @@
   "version": "43.10",
   "points": [
     {
-      "point_id": 271,
+      "point_id": 35,
+      "observations": 2
+    },
+    {
+      "point_id": 36,
+      "observations": 2
+    },
+    {
+      "point_id": 54,
       "observations": 1
+    },
+    {
+      "point_id": 55,
+      "observations": 1
+    },
+    {
+      "point_id": 60,
+      "observations": 1
+    },
+    {
+      "point_id": 61,
+      "observations": 1
+    },
+    {
+      "point_id": 78,
+      "observations": 1
+    },
+    {
+      "point_id": 80,
+      "observations": 1
+    },
+    {
+      "point_id": 85,
+      "observations": 2
+    },
+    {
+      "point_id": 102,
+      "observations": 1
+    },
+    {
+      "point_id": 116,
+      "observations": 1
+    },
+    {
+      "point_id": 117,
+      "observations": 1
+    },
+    {
+      "point_id": 123,
+      "observations": 1
+    },
+    {
+      "point_id": 150,
+      "observations": 1
+    },
+    {
+      "point_id": 162,
+      "observations": 2
+    },
+    {
+      "point_id": 210,
+      "observations": 1
+    },
+    {
+      "point_id": 211,
+      "observations": 1
+    },
+    {
+      "point_id": 215,
+      "observations": 1
+    },
+    {
+      "point_id": 254,
+      "observations": 1
+    },
+    {
+      "point_id": 257,
+      "observations": 1
+    },
+    {
+      "point_id": 263,
+      "observations": 1
+    },
+    {
+      "point_id": 270,
+      "observations": 2
+    },
+    {
+      "point_id": 271,
+      "observations": 2
+    },
+    {
+      "point_id": 274,
+      "observations": 1
+    },
+    {
+      "point_id": 321,
+      "observations": 1
+    },
+    {
+      "point_id": 325,
+      "observations": 1
+    },
+    {
+      "point_id": 363,
+      "observations": 1
+    },
+    {
+      "point_id": 366,
+      "observations": 1
+    },
+    {
+      "point_id": 388,
+      "observations": 1
+    },
+    {
+      "point_id": 390,
+      "observations": 1
+    },
+    {
+      "point_id": 395,
+      "observations": 1
+    },
+    {
+      "point_id": 432,
+      "observations": 1
+    },
+    {
+      "point_id": 442,
+      "observations": 1
+    },
+    {
+      "point_id": 451,
+      "observations": 1
+    },
+    {
+      "point_id": 453,
+      "observations": 1
+    },
+    {
+      "point_id": 457,
+      "observations": 1
+    },
+    {
+      "point_id": 463,
+      "observations": 1
+    },
+    {
+      "point_id": 477,
+      "observations": 1
+    },
+    {
+      "point_id": 505,
+      "observations": 1
+    },
+    {
+      "point_id": 507,
+      "observations": 1
+    },
+    {
+      "point_id": 546,
+      "observations": 1
+    },
+    {
+      "point_id": 548,
+      "observations": 1
+    },
+    {
+      "point_id": 550,
+      "observations": 2
+    },
+    {
+      "point_id": 561,
+      "observations": 1
+    },
+    {
+      "point_id": 594,
+      "observations": 1
+    },
+    {
+      "point_id": 596,
+      "observations": 1
+    },
+    {
+      "point_id": 601,
+      "observations": 1
+    },
+    {
+      "point_id": 604,
+      "observations": 1
+    },
+    {
+      "point_id": 615,
+      "observations": 1
+    },
+    {
+      "point_id": 616,
+      "observations": 1
+    },
+    {
+      "point_id": 617,
+      "observations": 1
+    },
+    {
+      "point_id": 622,
+      "observations": 1
+    },
+    {
+      "point_id": 627,
+      "observations": 1
+    },
+    {
+      "point_id": 660,
+      "observations": 1
+    },
+    {
+      "point_id": 662,
+      "observations": 1
+    },
+    {
+      "point_id": 672,
+      "observations": 1
+    },
+    {
+      "point_id": 677,
+      "observations": 1
+    },
+    {
+      "point_id": 693,
+      "observations": 1
+    },
+    {
+      "point_id": 694,
+      "observations": 1
+    },
+    {
+      "point_id": 717,
+      "observations": 1
+    },
+    {
+      "point_id": 719,
+      "observations": 1
+    },
+    {
+      "point_id": 721,
+      "observations": 1
+    },
+    {
+      "point_id": 723,
+      "observations": 2
+    },
+    {
+      "point_id": 725,
+      "observations": 1
+    },
+    {
+      "point_id": 726,
+      "observations": 1
+    },
+    {
+      "point_id": 731,
+      "observations": 1
+    },
+    {
+      "point_id": 733,
+      "observations": 2
+    },
+    {
+      "point_id": 734,
+      "observations": 1
+    },
+    {
+      "point_id": 736,
+      "observations": 1
+    },
+    {
+      "point_id": 755,
+      "observations": 1
+    },
+    {
+      "point_id": 760,
+      "observations": 2
+    },
+    {
+      "point_id": 786,
+      "observations": 1
+    },
+    {
+      "point_id": 788,
+      "observations": 2
+    },
+    {
+      "point_id": 792,
+      "observations": 1
+    },
+    {
+      "point_id": 793,
+      "observations": 1
+    },
+    {
+      "point_id": 794,
+      "observations": 1
+    },
+    {
+      "point_id": 797,
+      "observations": 2
+    },
+    {
+      "point_id": 798,
+      "observations": 1
+    },
+    {
+      "point_id": 799,
+      "observations": 1
+    },
+    {
+      "point_id": 800,
+      "observations": 1
+    },
+    {
+      "point_id": 801,
+      "observations": 1
+    },
+    {
+      "point_id": 802,
+      "observations": 1
+    },
+    {
+      "point_id": 803,
+      "observations": 1
+    },
+    {
+      "point_id": 805,
+      "observations": 1
+    },
+    {
+      "point_id": 807,
+      "observations": 2
+    },
+    {
+      "point_id": 814,
+      "observations": 1
+    },
+    {
+      "point_id": 848,
+      "observations": 1
+    },
+    {
+      "point_id": 863,
+      "observations": 1
+    },
+    {
+      "point_id": 864,
+      "observations": 1
+    },
+    {
+      "point_id": 865,
+      "observations": 1
+    },
+    {
+      "point_id": 866,
+      "observations": 2
     }
   ]
 }
