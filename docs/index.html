@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="Карта точек появления сундуков Fortnite v43.10 и наблюдения игроков.">
+  <title>Карта сундуков · Fortnite</title>
+  <link rel="stylesheet" href="site.css">
+  <script src="site.js" defer></script>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="brand-icon" aria-hidden="true"></span> Радар сундуков</div>
+    <a href="https://github.com/onetapggt-maker/fortnite-chest-radar">Проект на GitHub <span aria-hidden="true">↗</span></a>
+  </header>
+  <main>
+    <div class="heading">
+      <div><p class="edition">FORTNITE / 43.10</p><h1>Карта сундуков</h1></div>
+      <button id="report" class="primary" type="button" disabled>Добавить наблюдение</button>
+    </div>
+    <div class="workspace">
+      <section class="map" aria-label="Интерактивная карта">
+        <canvas id="island" tabindex="0" aria-label="Карта острова. Стрелки перемещают карту, плюс и минус меняют масштаб."></canvas>
+        <div class="map-tools" aria-label="Масштаб карты">
+          <button type="button" data-zoom="1.35" aria-label="Приблизить">+</button>
+          <button type="button" data-zoom="0.74" aria-label="Отдалить">−</button>
+          <button id="reset" type="button" aria-label="Показать весь остров">⌂</button>
+        </div>
+        <div class="map-note" id="map-note" aria-live="polite">Загружаю карту…</div>
+      </section>
+      <aside>
+        <section class="panel">
+          <h2>Слои карты</h2>
+          <div id="layers"></div>
+          <p>Точки показывают возможные места появления. Круги наблюдений обозначают примерные районы.</p>
+        </section>
+        <section class="panel reports">
+          <div class="section-head"><h2>Наблюдения</h2><button id="refresh" type="button">Обновить</button></div>
+          <p id="report-status" aria-live="polite">Загружаю наблюдения…</p>
+          <ul id="recent"></ul>
+        </section>
+      </aside>
+    </div>
+    <footer>Карта <a href="https://fortnite-api.com/">Fortnite-API</a> · Точки <a href="https://lifecrisis.life/loot">Crisis</a></footer>
+  </main>
+  <dialog id="report-dialog">
+    <form method="dialog">
+      <h2>Добавить наблюдение</h2>
+      <p id="picked"></p>
+      <p>GitHub откроет черновик публичной записи. Проверь координаты и отправь её со своего аккаунта.</p>
+      <div class="dialog-actions">
+        <button type="submit">Отмена</button>
+        <a id="issue-link" class="primary" target="_blank" rel="noopener noreferrer">Открыть черновик ↗</a>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>
