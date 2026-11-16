@@ -6,6 +6,9 @@ import cv2
 import numpy as np
 
 
+MAX_MARKERS = 3
+
+
 class ChestMemory:
     def __init__(self, folder):
         self.folder = Path(folder)
@@ -126,7 +129,7 @@ class ChestMemory:
         views.append((reference, rectangle, crop))
         return True
 
-    def update(self, frame, point, nearby, cue, overlay=None):
+    def update(self, frame, point, nearby, cue, overlays=()):
         known = [(key, view) for key in nearby for view in self.get(key)]
         can_learn = cue and point is not None and self.references and len(self.get(point)) < 3
         if not known and not can_learn:
@@ -137,18 +140,25 @@ class ChestMemory:
         gray = cv2.cvtColor(resized[:, :, :3], cv2.COLOR_BGR2GRAY)
         mask = np.zeros_like(gray)
         mask[112:465, round(gray.shape[1]*.18):round(gray.shape[1]*.82)] = 255
-        if overlay:
+        for overlay in overlays:
             x, y, w, h = (round(value*ratio) for value in overlay)
             mask[max(0,y):max(0,y+h), max(0,x):max(0,x+w)] = 0
         current = self.features(gray, mask)
         if current is None:
             return None
         # The global cue says a chest is nearby, but does not prove it is visible.
-        for key, (scene, rectangle, crop) in known:
+        visible_points = {}
+        for key, (scene, rectangle, _) in known:
+            if key in visible_points:
+                continue
             quad = self.project_scene(scene, current, rectangle)
             if quad is None:
                 continue
-            return ("image", key, quad / ratio, crop)
+            visible_points[key] = quad / ratio
+            if len(visible_points) == MAX_MARKERS:
+                break
+        if visible_points:
+            return ("images", visible_points)
         if can_learn:
             for reference in self.references:
                 rh, rw = reference[2]
@@ -156,16 +166,3 @@ class ChestMemory:
                 if visible is not None and self.remember(point, resized, gray, visible):
                     return ("saved", point)
         return None
-
-
-def warp_snapshot(crop, quad):
-    x, y, width, height = cv2.boundingRect(quad)
-    ch, cw = crop.shape[:2]
-    source = np.float32([[0, 0], [cw-1, 0], [cw-1, ch-1], [0, ch-1]])
-    transform = cv2.getPerspectiveTransform(source, quad - np.float32([x, y]))
-    rgba = cv2.cvtColor(crop, cv2.COLOR_BGR2RGBA)
-    fade = np.zeros((ch, cw), np.uint8)
-    fade[6:-6, 6:-6] = 178
-    rgba[:, :, 3] = cv2.GaussianBlur(fade, (11, 11), 0)
-    projected = cv2.warpPerspective(rgba, transform, (width, height))
-    return (x, y, width, height), projected

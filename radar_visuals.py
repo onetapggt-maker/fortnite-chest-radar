@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 
+import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
@@ -151,19 +152,62 @@ def container_marker(width, height, reported=False):
     return image
 
 
-def saved_chest_marker(projected):
-    chest = Image.fromarray(projected)
-    label = "Сохранённый вид"
-    face = font(12, True)
-    label_width = round(face.getlength(label)) + 22
-    image = Image.new("RGBA", (max(chest.width, label_width), chest.height + 25))
-    image.alpha_composite(chest)
+@lru_cache(maxsize=1)
+def chest_silhouette():
+    """A translucent, faceted chest with the bright edges of an X-ray outline."""
+    image = Image.new("RGBA", (180, 142))
+    hull = [(12, 62), (19, 46), (50, 24), (66, 16), (141, 33),
+            (155, 45), (171, 80), (161, 100), (129, 126), (112, 133), (12, 106)]
+    halo = Image.new("L", image.size)
+    ImageDraw.Draw(halo).polygon(hull, fill=145)
+    image.paste((255, 220, 4, 255), (0, 0, image.width, image.height),
+                halo.filter(ImageFilter.GaussianBlur(5)))
+    faces = Image.new("RGBA", image.size)
+    draw = ImageDraw.Draw(faces)
+    edge = (255, 252, 58, 244)
+    polygons = (
+        ([(12, 77), (111, 101), (112, 133), (12, 106)], (230, 166, 0, 188)),
+        ([(111, 101), (169, 79), (161, 100), (129, 126), (112, 133)], (181, 129, 0, 176)),
+        ([(12, 62), (19, 46), (117, 69), (111, 101), (12, 77)], (255, 211, 5, 200)),
+        ([(19, 46), (50, 24), (141, 45), (117, 69)], (255, 231, 15, 193)),
+        ([(50, 24), (66, 16), (141, 33), (155, 45), (141, 45)], (255, 247, 85, 182)),
+        ([(117, 69), (141, 45), (155, 45), (171, 80), (111, 101)], (226, 176, 0, 181)),
+    )
+    for points, color in polygons:
+        draw.polygon(points, fill=color)
+    for points in (
+        hull + [hull[0]],
+        [(12, 77), (111, 101), (171, 80)],
+        [(19, 46), (117, 69), (141, 45), (50, 24)],
+        [(117, 69), (111, 101), (112, 133)],
+        [(33, 51), (28, 80), (28, 110)],
+        [(96, 64), (91, 96), (92, 126)],
+    ):
+        draw.line(points, fill=edge, width=2, joint="curve")
+    draw.polygon([(55, 84), (71, 88), (71, 104), (55, 100)],
+                 fill=(255, 248, 91, 227), outline=edge)
+    draw.ellipse((61, 90, 66, 96), fill=(119, 83, 0, 220))
+    image.alpha_composite(faces)
+    return np.asarray(image)
+
+
+def saved_chest_marker(quad):
+    x, y, width, height = cv2.boundingRect(quad)
+    silhouette = chest_silhouette()
+    sh, sw = silhouette.shape[:2]
+    source = np.float32([[0, 0], [sw-1, 0], [sw-1, sh-1], [0, sh-1]])
+    transform = cv2.getPerspectiveTransform(source, quad - np.float32([x, y]))
+    chest = Image.fromarray(cv2.warpPerspective(silhouette, transform, (width, height)))
+    badge_width, badge_height = 30, 27
+    image = Image.new("RGBA", (max(width, badge_width), height + badge_height))
+    image.alpha_composite(chest, ((image.width-width)//2, badge_height))
     draw = ImageDraw.Draw(image)
-    y = chest.height + 2
-    draw.rounded_rectangle((0, y, label_width-1, y+21), radius=6,
-                           fill="#291b40ed", outline="#d7a9ff")
-    draw.text((11, y+10), label, font=face, fill="#f8eeff", anchor="lm")
-    return image
+    mid = image.width // 2
+    draw.rounded_rectangle((mid-12, 1, mid+12, 19), radius=5,
+                           fill="#fcfdff", outline="#423f31")
+    draw.polygon([(mid-4, 18), (mid+4, 18), (mid, 24)], fill="#fcfdff")
+    chest_symbol(draw, mid, 9, 6, "#4a4532", 1)
+    return (x-(image.width-width)//2, y-badge_height), image
 
 
 @lru_cache(maxsize=80)

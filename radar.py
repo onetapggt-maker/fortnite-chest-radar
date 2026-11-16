@@ -25,7 +25,7 @@ from radar_visuals import (
 )
 from radar_settings import Settings, clean_preferences
 from chest_cue import chest_cue, glowing_container
-from chest_memory import ChestMemory, warp_snapshot
+from chest_memory import ChestMemory, MAX_MARKERS
 from community import Community
 
 
@@ -315,12 +315,12 @@ class Radar:
         self.build_settings()
         self.options["boxes"] = self.prefs["boxes"]
         self.options["memory"] = self.prefs["memory"]
-        self.options["memory_drawn"] = None
+        self.options["memory_drawn"] = ()
         self.community = Community(self.prefs["share"])
         self.overlay = Layer()
         self.notice = Layer()
         self.box_overlay = Layer()
-        self.memory_overlay = Layer()
+        self.memory_layers = [Layer() for _ in range(MAX_MARKERS)]
         self.memory_until = 0.0
         self.last_box = None
         self.box_until = 0.0
@@ -411,7 +411,8 @@ class Radar:
         self.overlay.close()
         self.notice.close()
         self.box_overlay.close()
-        self.memory_overlay.close()
+        for layer in self.memory_layers:
+            layer.close()
         self.root.destroy()
 
     def hide(self):
@@ -448,22 +449,29 @@ class Radar:
         self.box_until = 0.0
 
     def clear_memory(self):
-        self.memory_overlay.hide()
-        self.options["memory_drawn"] = None
+        if self.options["memory_drawn"]:
+            for layer in self.memory_layers:
+                layer.hide()
+            self.options["memory_drawn"] = ()
 
     def show_memory(self, window, result):
-        if not self.prefs["memory"] or result is None or result[1] in self.options["opened"]:
+        if not self.prefs["memory"] or result is None:
             self.clear_memory()
             return
         if result[0] == "saved":
             self.clear_memory()
             self.show_feedback(window, "Внешний вид сохранён", "Вырез сундука сохранён на этом компьютере")
             return
-        _, _, quad, crop = result
-        (x, y, _, _), projected = warp_snapshot(crop, quad)
-        marker = saved_chest_marker(projected)
-        self.memory_overlay.draw(marker, window[0]+x, window[1]+y)
-        self.options["memory_drawn"] = (x, y, marker.width, marker.height)
+        visible = [quad for point, quad in result[1].items() if point not in self.options["opened"]]
+        drawn = []
+        for index, layer in enumerate(self.memory_layers):
+            if index >= len(visible):
+                layer.hide()
+                continue
+            (x, y), marker = saved_chest_marker(visible[index])
+            layer.draw(marker, window[0]+x, window[1]+y)
+            drawn.append((x, y, marker.width, marker.height))
+        self.options["memory_drawn"] = tuple(drawn)
         self.memory_until = time.monotonic() + .58
 
     def show_box(self, window, cue, box, reported=False):
@@ -484,7 +492,7 @@ class Radar:
         self.box_until = time.monotonic() + .55
 
     def animate(self, now):
-        if self.memory_overlay.visible and now >= self.memory_until:
+        if self.options["memory_drawn"] and now >= self.memory_until:
             self.clear_memory()
         if self.box_overlay.visible and now >= self.box_until:
             self.clear_box()
