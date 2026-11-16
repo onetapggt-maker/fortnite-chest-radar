@@ -17,6 +17,7 @@ import numpy as np
 
 
 BANNER_REGION = (.19, .06, .81, .60)
+GENERIC_FIND = "Находка"
 BANNER_TITLE = re.compile(
     r"^(?:(?:НАЙДЕН[АЫО]?|ОБНАРУЖЕН[АЫО]?|ПОЛУЧЕН[АЫО]?)\s+НАХОДК[АИ]"
     r"|НАХОДК[АИ](?:\s+НАЙДЕН[АЫО]?)?)(?=$|[\s:!—–-])\s*[:!—–-]?\s*(.*)$"
@@ -52,29 +53,36 @@ def find_name(lines, yellow):
         name = match[1].strip("«»! .")
         if name and any(letter.isalpha() for letter in name):
             return name.capitalize()
-        fallback = "Находка"
+        fallback = GENERIC_FIND
     return fallback
 
 
 class BannerTracker:
     def __init__(self):
+        self.candidate = None
         self.first_seen = None
         self.last_seen = None
-        self.logged = False
+        self.current = None
 
     def update(self, name, now):
         if self.last_seen is not None and now - self.last_seen > 1.2:
-            self.first_seen = self.last_seen = None
-            self.logged = False
+            self.candidate = self.current = None
         if not name:
             return None
         self.last_seen = now
-        if self.first_seen is None:
+        if name != self.candidate:
+            self.candidate = name
             self.first_seen = now
-        elif not self.logged and now - self.first_seen >= .09:
-            self.logged = True
-            return name
-        return None
+            return None
+        if name == self.current or now - self.first_seen < .09:
+            return None
+        if self.current is not None and name == GENERIC_FIND:
+            return None
+        previous = self.current
+        self.current = name
+        if previous == GENERIC_FIND:
+            return None
+        return name
 
 
 class OpenTracker:
