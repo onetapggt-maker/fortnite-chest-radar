@@ -20,7 +20,7 @@ from PIL import Image, ImageDraw, ImageTk
 import pystray
 
 from radar_visuals import (
-    GLOW_RADIUS, NOTICE_SIZE, Layer, saved_chest_marker, radar_frame,
+    GLOW_RADIUS, NOTICE_SIZE, Layer, chest_beam, radar_frame,
     notice_card, preview_base,
     preview_frame,
 )
@@ -194,7 +194,7 @@ def ignore_markers(bounds, points):
 
 def monitor_visible_chests(stop, options):
     memory = ChestMemory(MEMORY_FOLDER)
-    if not memory.references:
+    if not (memory.references or memory.open_references):
         return
     with MSS() as capture:
         while not stop.is_set():
@@ -208,11 +208,11 @@ def monitor_visible_chests(stop, options):
             bounds = crop_rect(window, LIVE_REGION)
             origin = (bounds["left"]-window[0], bounds["top"]-window[1])
             try:
-                quad = memory.detect_visible(np.asarray(capture.grab(bounds)), window[3], origin)
+                result = memory.detect_visible(np.asarray(capture.grab(bounds)), window[3], origin)
             except (ScreenShotError, cv2.error):
-                quad = None
-            if quad is not None:
-                options["live_chest"] = (window, captured, quad)
+                result = None
+            if result is not None:
+                options["live_chest"] = (window, captured, *result)
             stop.wait(max(0, .075 - (time.monotonic()-captured)))
 
 
@@ -228,6 +228,7 @@ def monitor(stop, events, options):
                 active = options["enabled"] and not options["paused"]
                 window = fortnite_window() if active else None
                 if window is None:
+                    options["map_link"] = None
                     events.put(("idle",))
                     stop.wait(0.25)
                     continue
@@ -237,12 +238,15 @@ def monitor(stop, events, options):
                     candidates.insert(0, last_region)
                 result = None
                 try:
+                    captured = time.monotonic()
                     game_frame = np.asarray(capture.grab(crop_rect(window, (0, 0, 1, 1))))
                     cue = chest_cue_position(game_frame)
                     box = glowing_container(game_frame) if cue and options["boxes"] else None
                     for candidate in candidates:
                         bounds = crop_rect(window, candidate)
-                        frame = np.asarray(capture.grab(bounds))
+                        x = bounds["left"] - window[0]
+                        y = bounds["top"] - window[1]
+                        frame = game_frame[y:y+bounds["height"], x:x+bounds["width"]]
                         # The glowing pixels aren't landmarks from the island map.
                         drawn = ignore_markers(bounds, options["drawn"])
                         result = island.locate(cv2.cvtColor(frame, cv2.COLOR_BGRA2GRAY), drawn)
@@ -250,10 +254,12 @@ def monitor(stop, events, options):
                             last_region = candidate
                             break
                 except ScreenShotError:
+                    options["map_link"] = None
                     events.put(("capture", window))
                     stop.wait(0.5)
                     continue
                 if result is None:
+                    options["map_link"] = None
                     options["suppress_live"] = None
                     events.put(("lost", window, cue, box))
                 else:
@@ -267,15 +273,22 @@ def monitor(stop, events, options):
                     suppressed = nearest in opened and distances[nearest] * METERS_PER_PIXEL <= 11
                     options["suppress_live"] = (window, nearest) if suppressed else None
                     can_show_cue = cue and not suppressed
-                    point_id = unique_nearby_point(distances, opened) if cue else None
+                    linked_point = unique_nearby_point(distances, opened)
+                    options["map_link"] = (window, captured, linked_point)
+                    point_id = linked_point if can_show_cue else None
                     distances[list(opened)] = np.inf
                     distance = distances.min()
                     saved_image = None
                     if options["memory"]:
+                        live = options["live_chest"]
+                        visibly_closed = (live and live[0] == window and live[2] == "closed"
+                                          and abs(captured-live[1]) <= .35)
                         nearby = np.flatnonzero(distances * METERS_PER_PIXEL <= 26).tolist()
                         nearby.sort(key=distances.__getitem__)
-                        saved_image = memory.update(game_frame, point_id, nearby, can_show_cue,
-                                                    options["memory_drawn"], allow_live=bool(can_show_cue))
+                        saved_image = memory.update(
+                            game_frame, linked_point, nearby, can_show_cue, options["memory_drawn"],
+                            allow_live=bool(can_show_cue or (linked_point is not None and visibly_closed)),
+                        )
                     events.put(("located", window, bounds, dots, north, distance * METERS_PER_PIXEL,
                                 cue if can_show_cue else None,
                                 tuple(round(float(value), 1) for value in center),
@@ -293,6 +306,12 @@ def unique_nearby_point(distances, opened):
     if (distances[second] - distances[first]) * METERS_PER_PIXEL < 4:
         return None
     return int(first)
+
+
+def same_chest(chest, lid):
+    margin = max(5, float(np.ptp(chest[:, 1])) * .35)
+    center = lid.mean(axis=0)
+    return np.all(center >= chest.min(axis=0) - margin) and np.all(center <= chest.max(axis=0) + margin)
 
 
 class Radar:
@@ -328,6 +347,9 @@ class Radar:
         self.cue_candidate = None
         self.cue_point_hits = 0
         self.recent_sightings = {}
+        self.marked_chests = set()
+        self.handled_visual = 0.0
+        self.pending_open = None
         self.points = {}
         self.demo_index = 0
         self.demo_start = time.monotonic()
@@ -350,6 +372,7 @@ class Radar:
         self.options["memory"] = self.prefs["memory"]
         self.options["memory_drawn"] = ()
         self.options["live_chest"] = None
+        self.options["map_link"] = None
         self.options["suppress_live"] = None
         self.slow_marker = None
         self.drawn_marker = None
@@ -506,7 +529,7 @@ class Radar:
             if index >= len(visible):
                 layer.hide()
                 continue
-            (x, y), marker = saved_chest_marker(visible[index], window[3])
+            (x, y), marker = chest_beam(visible[index], *window[2:])
             layer.draw(marker, window[0]+x, window[1]+y)
             drawn.append((x, y, marker.width, marker.height))
         self.options["memory_drawn"] = tuple(drawn)
@@ -518,19 +541,23 @@ class Radar:
         live = self.options["live_chest"]
         slow = self.slow_marker
         suppressed = self.options["suppress_live"]
-        use_live = (live is not None and live[0] == window and now-live[1] < .24 and
+        fresh = live is not None and live[0] == window and now-live[1] < .4
+        use_live = (fresh and live[2] == "closed" and
                     not (suppressed and suppressed[0] == window and suppressed[1] in self.options["opened"]))
         if use_live:
-            marker, result = live, ("live", {None: live[2]})
+            marker, result = live, ("live", {None: live[3]})
         elif slow is not None and slow[0] == window and now-slow[1] < .58:
             marker, result = slow, slow[2]
+            if fresh and live[2] == "open":
+                visible = {point: quad for point, quad in result[1].items() if not same_chest(quad, live[3])}
+                marker, result = live, (result[0], visible)
         else:
             self.clear_memory()
-            return False
+            return bool(fresh and live[2] == "open")
         if marker is not self.drawn_marker:
             self.show_memory(window, result)
             self.drawn_marker = marker
-        return use_live or result[0] in ("saved", "live")
+        return use_live or bool(fresh and live[2] == "open") or result[0] in ("saved", "live")
 
     def show_detected_chest(self, window, cue, box):
         if not cue or box is None or not self.prefs["boxes"]:
@@ -544,7 +571,7 @@ class Radar:
             self.box_overlay.hide()
             return
         quad = np.float32([[x, y], [x+width, y], [x+width, y+height], [x, y+height]])
-        (left, top), marker = saved_chest_marker(quad, window[3])
+        (left, top), marker = chest_beam(quad, *window[2:])
         self.box_overlay.draw(marker, window[0]+left, window[1]+top)
         self.box_until = time.monotonic() + .55
 
@@ -627,6 +654,8 @@ class Radar:
 
     def reset_opened(self):
         self.options["opened"] = ()
+        self.marked_chests.clear()
+        self.pending_open = None
         self.chest_band = None
         self.status.set("Открытые сундуки сброшены")
 
@@ -638,15 +667,56 @@ class Radar:
         cy = self.mark_bounds["height"] / 2
         closest = min(self.targets, key=lambda key:
                       (self.targets[key][0]-cx)**2 + (self.targets[key][1]-cy)**2)
-        self.options["opened"] = (*self.options["opened"], closest)
-        self.options["suppress_live"] = (window, closest)
-        self.options["live_chest"] = None
-        self.clear_memory()
-        self.closest_distance = float("inf")
-        self.targets.pop(closest)
-        self.points.pop(closest, None)
-        self.clear_notice()
+        self.hide_opened(window, closest)
         self.show_feedback(window, "Точка скрыта", "Сбросить отметки можно в меню радара в трее")
+
+    def hide_opened(self, window, point):
+        self.options["opened"] = (*self.options["opened"], point)
+        self.options["suppress_live"] = (window, point)
+        self.options["live_chest"] = None
+        self.marked_chests.discard(point)
+        self.slow_marker = None
+        self.clear_memory()
+        self.clear_box()
+        self.closest_distance = float("inf")
+        self.targets.pop(point, None)
+        self.points.pop(point, None)
+        self.clear_notice()
+
+    def observe_visual(self, window, now):
+        live = self.options["live_chest"]
+        if not live or live[0] != window or live[1] <= self.handled_visual or now-live[1] > .5:
+            return False
+        captured, state, lid = live[1:]
+        link = self.options["map_link"]
+        point = link[2] if link and link[0] == window and abs(captured-link[1]) <= .65 else None
+        slow = self.slow_marker
+        if state == "open" and slow and slow[0] == window and abs(captured-slow[1]) <= .4:
+            matches = [point for point, quad in slow[2][1].items()
+                       if point is not None and same_chest(quad, lid)]
+            if len(matches) > 1:
+                return False
+            if matches:
+                point = matches[0]
+                self.marked_chests.add(point)
+        if point is None:
+            return False
+        self.handled_visual = captured
+        if point in self.options["opened"]:
+            return False
+        if state == "closed":
+            self.marked_chests.add(point)
+            self.pending_open = None
+            return False
+        if point not in self.marked_chests:
+            return False
+        previous = self.pending_open
+        self.pending_open = (point, captured)
+        if previous and previous[0] == point and captured-previous[1] <= .7:
+            self.pending_open = None
+            self.hide_opened(window, point)
+            return True
+        return False
 
     def show_feedback(self, window, title, hint):
         if not self.prefs["notices"]:
@@ -814,6 +884,7 @@ class Radar:
         box_data = None
         if window is None:
             self.cue_hits = 0
+            self.pending_open = None
             self.hide()
             self.clear_box()
             self.clear_memory()
@@ -866,6 +937,8 @@ class Radar:
             self.mark_opened(window)
         self.mark_key_down = pressed
         now = time.monotonic()
+        if window is not None and self.observe_visual(window, now):
+            box_data = None
         direct = window is not None and self.show_latest_chest(window, now)
         if direct:
             self.clear_box()

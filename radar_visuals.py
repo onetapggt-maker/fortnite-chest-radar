@@ -130,22 +130,42 @@ def chest_symbol(draw, x, y, size, color, line):
             draw.line((rail, y-size*.35, rail, y+size*.65), fill=color, width=line)
 
 
-@lru_cache(maxsize=48)
-def chest_square(side):
-    image = Image.new("RGBA", (side, side))
+@lru_cache(maxsize=64)
+def beam_image(width, height):
+    image = Image.new("RGBA", (width, height))
     draw = ImageDraw.Draw(image)
-    draw.rectangle((1, 1, side-2, side-2), fill=(255, 32, 45, 35),
-                   outline=(255, 32, 48, 245), width=max(3, round(side*.024)))
-    return image
+    x = width // 2
+    base = height - x - 1
+    draw.line((x, 0, x, base), fill=(255, 28, 42, 195), width=max(4, width // 3))
+    image = image.filter(ImageFilter.GaussianBlur(max(1, width / 8)))
+    beam = Image.new("RGBA", (width, height))
+    draw = ImageDraw.Draw(beam)
+    core = max(2, width // 10)
+    for y in range(base + 1):
+        fraction = y / max(1, base)
+        draw.line((x-core, y, x+core, y),
+                  fill=(255, 24 + round(68*fraction), 45 + round(64*fraction),
+                        145 + round(110*fraction)))
+    radius = max(3, width // 5)
+    draw.ellipse((x-radius, base-radius, x+radius, base+radius),
+                 fill="#690b1c", outline="#ff6270", width=max(1, core))
+    draw.ellipse((x-1, base-1, x+1, base+1), fill="#fff1f3")
+    return Image.alpha_composite(image, beam)
 
 
-def saved_chest_marker(quad, viewport_height):
-    left, top = quad.min(axis=0)
-    right, bottom = quad.max(axis=0)
-    side = round(max(viewport_height*.11, max(right-left, bottom-top)*1.20))
-    x = round((left+right-side)/2)
-    y = round((top+bottom-side)/2)
-    return (x, y), chest_square(side)
+def chest_beam(quad, viewport_width, viewport_height):
+    center = quad.mean(axis=0)
+    x = min(viewport_width - 1, max(0, round(float(center[0]))))
+    y = min(viewport_height - 1, max(0, round(float(center[1]))))
+    radius = max(8, round(viewport_height * .012))
+    left = x - radius
+    image = beam_image(radius * 2 + 1, y + radius + 1)
+    inset = max(0, -left)
+    right = min(image.width, viewport_width - left)
+    bottom = min(image.height, viewport_height)
+    if inset or right != image.width or bottom != image.height:
+        image = image.crop((inset, 0, right, bottom))
+    return (left + inset, 0), image
 
 
 @lru_cache(maxsize=80)

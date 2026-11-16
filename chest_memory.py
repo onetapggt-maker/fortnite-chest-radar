@@ -7,23 +7,28 @@ import numpy as np
 
 
 MAX_MARKERS = 3
-LIVE_REGION = (.25, .20, .75, .83)
+LIVE_REGION = (.12, .14, .88, .88)
 
 
 class ChestMemory:
     def __init__(self, folder):
         self.folder = Path(folder)
-        self.references = []
         self.entries = {}
         self.sift = cv2.SIFT_create(nfeatures=1250, contrastThreshold=.018)
         self.matcher = cv2.BFMatcher(cv2.NORM_L2)
-        for path in sorted(self.folder.glob("reference*.png")):
+        self.references = self.load_references("reference*.png")
+        self.open_references = self.load_references("open-reference*.png")
+
+    def load_references(self, pattern):
+        references = []
+        for path in sorted(self.folder.glob(pattern)):
             try:
                 features = self.features(cv2.imdecode(np.fromfile(path, np.uint8), cv2.IMREAD_GRAYSCALE))
                 if features is not None:
-                    self.references.append(features)
+                    references.append(features)
             except (OSError, cv2.error):
                 continue
+        return references
 
     def features(self, gray, mask=None):
         if gray is None:
@@ -33,10 +38,10 @@ class ChestMemory:
             return None
         return np.float32([point.pt for point in keypoints]), descriptors, gray.shape
 
-    def find_reference(self, current, minimum):
+    def find_reference(self, current, minimum, references=None):
         if current is None:
             return None
-        for reference in self.references:
+        for reference in self.references if references is None else references:
             height, width = reference[2]
             visible = self.project(reference, current, (0, 0, width, height), minimum)
             if visible is not None:
@@ -44,15 +49,21 @@ class ChestMemory:
         return None
 
     def detect_visible(self, cropped_frame, height, origin):
-        if not self.references:
+        if not (self.references or self.open_references):
             return None
         ratio = 540 / height
         gray = cv2.cvtColor(cropped_frame[:, :, :3], cv2.COLOR_BGR2GRAY)
         gray = cv2.resize(gray, None, fx=ratio, fy=ratio, interpolation=cv2.INTER_AREA)
-        quad = self.find_reference(self.features(gray), 12)
-        if quad is None:
-            return None
-        return quad / ratio + np.float32(origin)
+        current = self.features(gray)
+        opened = self.find_reference(current, 10, self.open_references)
+        closed = self.find_reference(current, 12)
+        if opened is not None:
+            if closed is not None and np.linalg.norm(opened.mean(axis=0) - closed.mean(axis=0)) > 45:
+                return None
+            return "open", opened / ratio + np.float32(origin)
+        if closed is not None:
+            return "closed", closed / ratio + np.float32(origin)
+        return None
 
     def project(self, reference, current, rectangle, minimum, anchored=False):
         source, source_descriptors, _ = reference
@@ -165,10 +176,7 @@ class ChestMemory:
         scene_mask = mask.copy() if overlays else mask
         for overlay in overlays:
             x, y, w, h = (round(value*ratio) for value in overlay)
-            # The square's center is translucent. Keep its background detail
-            # available and filter only the strong red frame from scene matching.
-            cv2.rectangle(scene_mask, (x, y), (x+w-1, y+h-1), 0,
-                          thickness=max(4, round(w*.045)))
+            cv2.rectangle(scene_mask, (x, y), (x+w-1, y+h-1), 0, thickness=-1)
         current = self.features(gray, scene_mask) if known or not overlays else None
         # The global cue says a chest is nearby, but does not prove it is visible.
         visible_points = {}
