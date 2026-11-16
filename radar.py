@@ -20,11 +20,11 @@ from PIL import Image, ImageDraw, ImageTk
 import pystray
 
 from radar_visuals import (
-    GLOW_RADIUS, NOTICE_SIZE, Layer, radar_frame, notice_card, preview_base,
+    GLOW_RADIUS, NOTICE_SIZE, Layer, container_marker, radar_frame, notice_card, preview_base,
     preview_frame,
 )
 from radar_settings import Settings, clean_preferences
-from chest_cue import chest_cue
+from chest_cue import chest_cue, glowing_container
 
 
 HERE = Path(__file__).resolve().parent
@@ -208,7 +208,9 @@ def monitor(stop, events, options):
                     candidates.insert(0, last_region)
                 result = None
                 try:
-                    cue = chest_cue(np.asarray(capture.grab(crop_rect(window, (0, 0, 1, 1)))))
+                    game_frame = np.asarray(capture.grab(crop_rect(window, (0, 0, 1, 1))))
+                    cue = chest_cue(game_frame)
+                    box = glowing_container(game_frame) if cue and options["boxes"] else None
                     for candidate in candidates:
                         bounds = crop_rect(window, candidate)
                         frame = np.asarray(capture.grab(bounds))
@@ -223,7 +225,7 @@ def monitor(stop, events, options):
                     stop.wait(0.5)
                     continue
                 if result is None:
-                    events.put(("lost", window, cue))
+                    events.put(("lost", window, cue, box))
                 else:
                     opened = options["opened"]
                     dots = island.visible_chests(result, bounds["width"], bounds["height"], opened)
@@ -234,7 +236,7 @@ def monitor(stop, events, options):
                     distances[list(opened)] = np.inf
                     distance = distances.min()
                     events.put(("located", window, bounds, dots, north, distance * METERS_PER_PIXEL,
-                                cue, tuple(round(float(value), 1) for value in center)))
+                                cue, tuple(round(float(value), 1) for value in center), box))
                 stop.wait(0.18)
     except (OSError, ValueError, cv2.error, RuntimeError, ScreenShotError) as error:
         events.put(("error", str(error)))
@@ -286,8 +288,12 @@ class Radar:
             except (OSError, ValueError, TypeError):
                 pass
         self.build_settings()
+        self.options["boxes"] = self.prefs["boxes"]
         self.overlay = Layer()
         self.notice = Layer()
+        self.box_overlay = Layer()
+        self.last_box = None
+        self.box_until = 0.0
         root.protocol("WM_DELETE_WINDOW", root.withdraw)
         root.withdraw()
         self.tray = pystray.Icon("FortniteChestRadar", tray_image(), "Радар сундуков Fortnite",
@@ -327,6 +333,10 @@ class Radar:
         if self.prefs[key] == value:
             return
         self.prefs[key] = value
+        if key == "boxes":
+            self.options["boxes"] = value
+            if not value:
+                self.clear_box()
         if not self.prefs["notices"]:
             self.clear_notice()
         if self.save_job:
@@ -363,6 +373,7 @@ class Radar:
         self.tray.stop()
         self.overlay.close()
         self.notice.close()
+        self.box_overlay.close()
         self.root.destroy()
 
     def hide(self):
@@ -393,7 +404,31 @@ class Radar:
         self.targets = dots
         self.north = north
 
+    def clear_box(self):
+        self.box_overlay.hide()
+        self.last_box = None
+        self.box_until = 0.0
+
+    def show_box(self, window, cue, box):
+        if not cue or not self.prefs["boxes"]:
+            self.clear_box()
+            return
+        if box is None:
+            self.last_box = None
+            return
+        previous = self.last_box
+        self.last_box = box
+        x, y, width, height = box
+        if previous is None or any(abs(value-old) > max(12, min(width, height)*.25)
+                                   for value, old in zip(box, previous)):
+            self.box_overlay.hide()
+            return
+        self.box_overlay.draw(container_marker(width, height), window[0]+x-12, window[1]+y-12)
+        self.box_until = time.monotonic() + .55
+
     def animate(self, now):
+        if self.box_overlay.visible and now >= self.box_until:
+            self.clear_box()
         if self.mark_bounds:
             bounds = self.mark_bounds
             positions = {}
@@ -618,6 +653,7 @@ class Radar:
         if window is None:
             self.cue_hits = 0
             self.hide()
+            self.clear_box()
             self.clear_notice()
             self.lost_signal = False
             self.chest_band = None
@@ -632,19 +668,23 @@ class Radar:
                         self.show_notice("restored", window, timed=True)
                 else:
                     self.issue = None
-                _, bounds, dots, north, distance, cue, area = args
+                _, bounds, dots, north, distance, cue, area, box = args
                 self.status.set(f"Точек на мини-карте: {len(dots)}")
                 self.closest_distance = distance
                 self.render(bounds, {key: point for key, point in dots.items()
                                      if key not in self.options["opened"]}, north)
                 self.check_proximity(window, distance)
                 self.observe_chest(window, cue, area)
+                self.show_box(window, cue, box)
             elif state in ("lost", "capture") and args[0] == window:
                 self.hide()
                 self.status.set(ISSUES[state][0])
                 self.alert(state, window)
                 if state == "lost":
                     self.observe_chest(window, args[1])
+                    self.show_box(window, args[1], args[2])
+                else:
+                    self.clear_box()
             elif state in ("ready", "idle") and window is None:
                 self.status.set("Переключись в матч Fortnite")
         if active and self.error:

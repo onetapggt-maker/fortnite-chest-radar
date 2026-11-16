@@ -130,6 +130,26 @@ def chest_symbol(draw, x, y, size, color, line):
             draw.line((rail, y-size*.35, rail, y+size*.65), fill=color, width=line)
 
 
+@lru_cache(maxsize=32)
+def container_marker(width, height):
+    pad = 12
+    label = "Возможный сундук"
+    face = font(12, True)
+    label_width = round(face.getlength(label)) + 34
+    image = Image.new("RGBA", (max(width, label_width) + 2*pad, height + 50))
+    draw = ImageDraw.Draw(image)
+    length = max(6, min(20, width//5, height//5))
+    for x, dx in ((pad, 1), (pad+width, -1)):
+        for y, dy in ((pad, 1), (pad+height, -1)):
+            draw.line((x, y+dy*length, x, y, x+dx*length, y), fill="#b3f5ff", width=2)
+    top = height + pad + 7
+    draw.rounded_rectangle((pad, top, pad+label_width, top+24), radius=7,
+                           fill="#20132eee", outline="#b3f5ff")
+    chest_symbol(draw, pad+13, top+11, 6, "#ffd476", 1)
+    draw.text((pad+24, top+12), label, font=face, fill="#f8eeff", anchor="lm")
+    return image
+
+
 @lru_cache(maxsize=80)
 def marker_sprite(phase, size=5, icon=True):
     size = GLOW_RADIUS * 2 + 1
