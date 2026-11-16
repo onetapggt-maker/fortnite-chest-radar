@@ -5,7 +5,6 @@ import math
 import os
 from pathlib import Path
 
-import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageEnhance, ImageFilter, ImageFont, ImageOps
 
@@ -129,32 +128,6 @@ def chest_symbol(draw, x, y, size, color, line):
         for side in (-1, 1):
             rail = x + size*.62*side
             draw.line((rail, y-size*.35, rail, y+size*.65), fill=color, width=line)
-
-
-@lru_cache(maxsize=1)
-def red_cube():
-    image = Image.new("RGBA", (160, 160))
-    draw = ImageDraw.Draw(image)
-    top_left, ridge, far_right, joint = (10, 46), (59, 13), (150, 41), (102, 74)
-    bottom_left, bottom_joint, bottom_right = (10, 118), (102, 146), (150, 113)
-    draw.polygon([top_left, ridge, far_right, joint], fill=(255, 78, 83, 125))
-    draw.polygon([top_left, joint, bottom_joint, bottom_left], fill=(235, 29, 42, 145))
-    draw.polygon([joint, far_right, bottom_right, bottom_joint], fill=(160, 10, 27, 155))
-    edge = (255, 71, 79, 235)
-    draw.line([top_left, ridge, far_right, bottom_right, bottom_joint, bottom_left, top_left],
-              fill=edge, width=3, joint="curve")
-    draw.line([top_left, joint, far_right], fill=edge, width=2)
-    draw.line([joint, bottom_joint], fill=edge, width=2)
-    return np.asarray(image)
-
-
-def directional_chest_marker(quad):
-    x, y, width, height = cv2.boundingRect(quad)
-    cube = red_cube()
-    sh, sw = cube.shape[:2]
-    source = np.float32([[0, 0], [sw-1, 0], [sw-1, sh-1], [0, sh-1]])
-    transform = cv2.getPerspectiveTransform(source, quad - np.float32([x, y]))
-    return (x, y), Image.fromarray(cv2.warpPerspective(cube, transform, (width, height)))
 
 
 @lru_cache(maxsize=48)

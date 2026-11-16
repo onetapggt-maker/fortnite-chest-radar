@@ -20,7 +20,7 @@ from PIL import Image, ImageDraw, ImageTk
 import pystray
 
 from radar_visuals import (
-    GLOW_RADIUS, NOTICE_SIZE, Layer, directional_chest_marker, saved_chest_marker, radar_frame,
+    GLOW_RADIUS, NOTICE_SIZE, Layer, saved_chest_marker, radar_frame,
     notice_card, preview_base,
     preview_frame,
 )
@@ -240,15 +240,17 @@ def monitor(stop, events, options):
                     center = result @ np.array([bounds["width"]/2, bounds["height"]/2, 1])
                     distances = np.linalg.norm(island.points - center, axis=1)
                     nearest = int(distances.argmin())
-                    can_show_cue = cue and not (nearest in opened and distances[nearest] * METERS_PER_PIXEL <= 11)
+                    suppressed = nearest in opened and distances[nearest] * METERS_PER_PIXEL <= 11
+                    can_show_cue = cue and not suppressed
                     point_id = unique_nearby_point(distances, opened) if cue else None
                     distances[list(opened)] = np.inf
                     distance = distances.min()
                     saved_image = None
-                    if options["memory"] and (can_show_cue or distance * METERS_PER_PIXEL <= 26):
+                    if options["memory"]:
                         nearby = np.flatnonzero(distances * METERS_PER_PIXEL <= 26).tolist()
                         nearby.sort(key=distances.__getitem__)
-                        saved_image = memory.update(game_frame, point_id, nearby, can_show_cue, options["memory_drawn"])
+                        saved_image = memory.update(game_frame, point_id, nearby, can_show_cue,
+                                                    options["memory_drawn"], allow_live=not suppressed)
                     events.put(("located", window, bounds, dots, north, distance * METERS_PER_PIXEL,
                                 cue if can_show_cue else None,
                                 tuple(round(float(value), 1) for value in center),
@@ -479,29 +481,18 @@ class Radar:
         self.memory_until = time.monotonic() + .58
 
     def show_detected_chest(self, window, cue, box):
-        if cue is None:
+        if not cue or box is None or not self.prefs["boxes"]:
             self.clear_box()
             return
         previous = self.last_box
-        self.last_box = box if self.prefs["boxes"] else None
-        if self.last_box is not None and previous is not None and all(
-            abs(value-old) <= max(12, min(box[2:])*.25) for value, old in zip(box, previous)
-        ):
-            x, y, width, height = box
-            quad = np.float32([[x, y], [x+width, y], [x+width, y+height], [x, y+height]])
-            (left, top), marker = saved_chest_marker(quad, window[3])
-        else:
-            # Extend the game cue radially to keep its glyph visible and avoid
-            # feeding our own marker back into the chest detector.
-            cx, cy = window[2] / 2, window[3] / 2
-            dx, dy = cue[0]-cx, cue[1]-cy
-            length = max(math.hypot(dx, dy), 1)
-            size = max(22, round(window[3] * .034))
-            offset = size * 1.2
-            x = cue[0] + dx / length * offset - size / 2
-            y = cue[1] + dy / length * offset - size / 2
-            quad = np.float32([[x, y], [x+size, y], [x+size, y+size], [x, y+size]])
-            (left, top), marker = directional_chest_marker(quad)
+        self.last_box = box
+        x, y, width, height = box
+        if previous is None or any(abs(value-old) > max(12, min(width, height)*.25)
+                                   for value, old in zip(box, previous)):
+            self.box_overlay.hide()
+            return
+        quad = np.float32([[x, y], [x+width, y], [x+width, y+height], [x, y+height]])
+        (left, top), marker = saved_chest_marker(quad, window[3])
         self.box_overlay.draw(marker, window[0]+left, window[1]+top)
         self.box_until = time.monotonic() + .55
 

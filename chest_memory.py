@@ -129,9 +129,9 @@ class ChestMemory:
         views.append((reference, rectangle, crop))
         return True
 
-    def update(self, frame, point, nearby, cue, overlays=()):
+    def update(self, frame, point, nearby, cue, overlays=(), allow_live=True):
         known = [(key, view) for key in nearby for view in self.get(key)]
-        can_recognize = cue and bool(self.references)
+        can_recognize = allow_live and bool(self.references)
         if not known and not can_recognize:
             return None
         height, width = frame.shape[:2]
@@ -139,7 +139,7 @@ class ChestMemory:
         resized = cv2.resize(frame, (round(width*ratio), 540), interpolation=cv2.INTER_AREA)
         gray = cv2.cvtColor(resized[:, :, :3], cv2.COLOR_BGR2GRAY)
         mask = np.zeros_like(gray)
-        mask[112:465, round(gray.shape[1]*.18):round(gray.shape[1]*.82)] = 255
+        mask[88:478, round(gray.shape[1]*.15):round(gray.shape[1]*.85)] = 255
         scene_mask = mask.copy() if overlays else mask
         for overlay in overlays:
             x, y, w, h = (round(value*ratio) for value in overlay)
@@ -169,7 +169,7 @@ class ChestMemory:
                 return None
             for reference in self.references:
                 rh, rw = reference[2]
-                visible = self.project(reference, current, (0, 0, rw, rh), 9)
+                visible = self.project(reference, current, (0, 0, rw, rh), 9 if cue else 12)
                 if visible is not None:
                     images = {point: visible / ratio}
                     if point is not None and self.remember(point, resized, gray, visible):
