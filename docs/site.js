@@ -3,6 +3,8 @@
 const repository = "onetapggt-maker/fortnite-chest-radar";
 const github = `https://github.com/${repository}`;
 const issueApi = `https://api.github.com/repos/${repository}/issues?state=open&per_page=100`;
+const communityApi = "https://fortnite-chest-radar-api-onetapggt.yummydot9.chatgpt.site/observations";
+const snapshotUrl = `https://raw.githubusercontent.com/${repository}/main/community-snapshot.json`;
 const canvas = document.querySelector("#island");
 const ctx = canvas.getContext("2d");
 const placeButton = document.querySelector("#report");
@@ -15,6 +17,7 @@ const layers = {
   chest: { label: "Обычные", color: "#ffd476", points: [] },
   rare_chest: { label: "Редкие", color: "#62e5ff", points: [] },
   buried_chest: { label: "Закопанные", color: "#f3a9a0", points: [] },
+  community: { label: "Отмечены игроками", color: "#daabff", points: [] },
   sightings: { label: "Наблюдения", color: "#c788ff", points: [] },
 };
 let data;
@@ -22,6 +25,7 @@ let controls = {};
 let view = { x: 0, y: 0, zoom: 1 };
 let screen = { w: 1, h: 1, fit: 1 };
 let reports = [];
+let numberedChests = [];
 let selectedReport = null;
 let placing = false;
 let gesture = null;
@@ -40,6 +44,7 @@ function parseObservation(issue, map) {
 async function observations() {
   refresh.disabled = true;
   reportStatus.textContent = "Загружаю наблюдения…";
+  const shared = communityObservations();
   try {
     const response = await fetch(issueApi, { headers: { Accept: "application/vnd.github+json" } });
     if (!response.ok) throw new Error(String(response.status));
@@ -62,9 +67,35 @@ async function observations() {
   } catch {
     reportStatus.textContent = "GitHub не ответил. Попробуй обновить позже.";
   } finally {
+    await shared;
     refresh.disabled = false;
     draw();
   }
+}
+
+async function communityObservations() {
+  const label = document.querySelector("#community-status");
+  for (const url of [communityApi, snapshotUrl]) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(6500) });
+      if (!response.ok) continue;
+      const feed = await response.json();
+      if (feed.version !== data.version || !Array.isArray(feed.points)) continue;
+      const ids = new Set(feed.points.filter(row =>
+        row && Number.isInteger(row.point_id) && numberedChests[row.point_id] &&
+        Number.isInteger(row.observations) && row.observations > 0).map(row => row.point_id));
+      layers.community.points = Array.from(ids, id => numberedChests[id]);
+      controls.community.count.textContent = ids.size;
+      label.textContent = url === communityApi
+        ? `Автоматические отметки за 7 дней: ${ids.size}`
+        : `Резервная копия GitHub: ${ids.size} отметок`;
+      draw();
+      return;
+    } catch {
+      // Try the GitHub snapshot when the live service cannot be reached.
+    }
+  }
+  label.textContent = "Автоматические отметки пока недоступны.";
 }
 
 function initLayers() {
@@ -120,13 +151,18 @@ function draw() {
       const y = top + point.y * scale;
       if (x < -50 || y < -50 || x > screen.w + 50 || y > screen.h + 50) continue;
       ctx.beginPath();
-      const r = key === "sightings" ? Math.max(8, 22 * scale) : Math.min(4, 1.4 + view.zoom / 3);
+      const r = key === "sightings" ? Math.max(8, 22 * scale)
+        : key === "community" ? Math.min(7, 4 + view.zoom / 3)
+        : Math.min(4, 1.4 + view.zoom / 3);
       ctx.arc(x, y, r, 0, 2 * Math.PI);
       if (key === "sightings") {
         ctx.globalAlpha = .22;
         ctx.fill();
         ctx.globalAlpha = 1;
         ctx.lineWidth = selectedReport?.number === point.number ? 3 : 1.5;
+        ctx.stroke();
+      } else if (key === "community") {
+        ctx.lineWidth = 1.6;
         ctx.stroke();
       } else {
         ctx.fill();
@@ -237,6 +273,7 @@ async function start() {
     for (const [type, x, y] of map.points) {
       const layer = layers[map.types[type]];
       if (layer) layer.points.push({ x, y });
+      if (["chest", "rare_chest"].includes(map.types[type])) numberedChests.push({ x, y });
     }
     data = map;
     initLayers();

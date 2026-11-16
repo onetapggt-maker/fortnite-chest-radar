@@ -19,7 +19,7 @@ FONT = "Segoe UI"
 DEFAULTS = {
     "theme": "Неон", "size": 100, "opacity": 94, "speed": 100,
     "pulse": True, "scan": True, "glow": True, "icons": True, "notices": True, "boxes": True,
-    "near": True, "close": True, "errors": True, "restored": True,
+    "near": True, "close": True, "errors": True, "restored": True, "share": True,
     "position": "У мини-карты", "duration": 4,
 }
 POSITIONS = ("У мини-карты", "Слева по центру")
@@ -211,6 +211,7 @@ class Settings:
         self.check(page, "icons", "Иконки сундуков")
         self.check(page, "glow", "Золотое свечение")
         self.check(page, "boxes", "Подсвечивать светящиеся ящики")
+        self.check(page, "share", "Делиться наблюдениями без аккаунта")
         self.label(page, "Калибровка мини-карты", 12, FG, PANEL, True).pack(anchor="w", pady=(16, 8))
         self.button(page, "Выделить мини-карту", self.app.calibrate, True).pack(fill="x")
         self.button(page, "Сбросить выделение", self.app.reset).pack(fill="x", pady=(7, 0))

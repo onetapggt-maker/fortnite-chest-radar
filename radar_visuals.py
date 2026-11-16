@@ -131,9 +131,10 @@ def chest_symbol(draw, x, y, size, color, line):
 
 
 @lru_cache(maxsize=32)
-def container_marker(width, height):
+def container_marker(width, height, reported=False):
     pad = 12
-    label = "Возможный сундук"
+    label = "Точка отмечена игроками" if reported else "Возможный сундук"
+    accent = "#d7a9ff" if reported else "#b3f5ff"
     face = font(12, True)
     label_width = round(face.getlength(label)) + 34
     image = Image.new("RGBA", (max(width, label_width) + 2*pad, height + 50))
@@ -141,10 +142,10 @@ def container_marker(width, height):
     length = max(6, min(20, width//5, height//5))
     for x, dx in ((pad, 1), (pad+width, -1)):
         for y, dy in ((pad, 1), (pad+height, -1)):
-            draw.line((x, y+dy*length, x, y, x+dx*length, y), fill="#b3f5ff", width=2)
+            draw.line((x, y+dy*length, x, y, x+dx*length, y), fill=accent, width=2)
     top = height + pad + 7
     draw.rounded_rectangle((pad, top, pad+label_width, top+24), radius=7,
-                           fill="#20132eee", outline="#b3f5ff")
+                           fill="#20132eee", outline=accent)
     chest_symbol(draw, pad+13, top+11, 6, "#ffd476", 1)
     draw.text((pad+24, top+12), label, font=face, fill="#f8eeff", anchor="lm")
     return image
@@ -173,21 +174,24 @@ def marker_sprite(phase, size=5, icon=True):
     return halo.resize((size, size), Image.Resampling.LANCZOS)
 
 
-def glowing_markers(width, height, points, t, size=5, glow=True, icon=True):
+def glowing_markers(width, height, points, t, size=5, glow=True, icon=True, reported=()):
     image = Image.new("RGBA", (width, height))
     groups = []
     for key, (x, y) in points.items():
         for group in groups:
             if (x-group[1])**2 + (y-group[2])**2 < 12**2:
                 group[3] += 1
+                group[4] |= key in reported
                 break
         else:
-            groups.append([key, x, y, 1])
-    for key, x, y, count in groups:
+            groups.append([key, x, y, 1, key in reported])
+    for key, x, y, count, community in groups:
         pulse = (1 + math.sin(t * 2.35 + key * 0.43)) / 2
         phase = round(23 * pulse) if glow else -1
         image.alpha_composite(marker_sprite(phase, size, icon),
                               (round(x) - GLOW_RADIUS, round(y) - GLOW_RADIUS))
+        if community:
+            ImageDraw.Draw(image).ellipse((x-8, y-8, x+8, y+8), outline="#d2a2ff", width=1)
         if count > 1:
             draw = ImageDraw.Draw(image)
             label = str(min(count, 99))
@@ -274,7 +278,7 @@ def compass_frame(width, height, theme, north, size):
     return ring.resize((width, height), Image.Resampling.LANCZOS)
 
 
-def radar_frame(width, height, points, t, options, north=-90, preview=False):
+def radar_frame(width, height, points, t, options, north=-90, preview=False, reported=()):
     image = Image.new("RGBA", (width, height))
     theme = options["theme"]
     accent = THEMES[theme][0]
@@ -301,7 +305,8 @@ def radar_frame(width, height, points, t, options, north=-90, preview=False):
         ring.putalpha(ring.getchannel("A").point(lambda value: round(value*amount)))
     image.alpha_composite(ring)
     image.alpha_composite(glowing_markers(width, height, points, t * speed,
-                                          7 if preview else 5, options["glow"], options["icons"]))
+                                          7 if preview else 5, options["glow"], options["icons"],
+                                          reported))
     if preview:
         ImageDraw.Draw(image).polygon((cx, cy-9, cx-7, cy+7, cx, cy+4, cx+7, cy+7), fill="#fff5ff")
     return image

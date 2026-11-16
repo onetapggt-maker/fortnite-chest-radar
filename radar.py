@@ -25,6 +25,7 @@ from radar_visuals import (
 )
 from radar_settings import Settings, clean_preferences
 from chest_cue import chest_cue, glowing_container
+from community import Community
 
 
 HERE = Path(__file__).resolve().parent
@@ -233,13 +234,23 @@ def monitor(stop, events, options):
                     north = math.degrees(math.atan2(-inverse[1, 1], -inverse[0, 1]))
                     center = result @ np.array([bounds["width"]/2, bounds["height"]/2, 1])
                     distances = np.linalg.norm(island.points - center, axis=1)
+                    point_id = unique_nearby_point(distances, opened) if cue else None
                     distances[list(opened)] = np.inf
                     distance = distances.min()
                     events.put(("located", window, bounds, dots, north, distance * METERS_PER_PIXEL,
-                                cue, tuple(round(float(value), 1) for value in center), box))
+                                cue, tuple(round(float(value), 1) for value in center), box, point_id))
                 stop.wait(0.18)
     except (OSError, ValueError, cv2.error, RuntimeError, ScreenShotError) as error:
         events.put(("error", str(error)))
+
+
+def unique_nearby_point(distances, opened):
+    first, second = np.argsort(distances)[:2]
+    if first in opened or distances[first] * METERS_PER_PIXEL > 11:
+        return None
+    if (distances[second] - distances[first]) * METERS_PER_PIXEL < 4:
+        return None
+    return int(first)
 
 
 class Radar:
@@ -270,6 +281,7 @@ class Radar:
         self.cue_hits = 0
         self.last_cue = 0.0
         self.cue_saved = False
+        self.cue_uploaded = False
         self.points = {}
         self.demo_index = 0
         self.demo_start = time.monotonic()
@@ -289,6 +301,7 @@ class Radar:
                 pass
         self.build_settings()
         self.options["boxes"] = self.prefs["boxes"]
+        self.community = Community(self.prefs["share"])
         self.overlay = Layer()
         self.notice = Layer()
         self.box_overlay = Layer()
@@ -312,6 +325,7 @@ class Radar:
         self.tray.run_detached()
         threading.Thread(target=monitor, args=(self.stop, self.events, self.options),
                          daemon=True).start()
+        threading.Thread(target=self.community.run, args=(self.stop,), daemon=True).start()
         root.after(33, self.update)
 
     def build_settings(self):
@@ -337,6 +351,8 @@ class Radar:
             self.options["boxes"] = value
             if not value:
                 self.clear_box()
+        if key == "share":
+            self.community.set_enabled(value)
         if not self.prefs["notices"]:
             self.clear_notice()
         if self.save_job:
@@ -409,7 +425,7 @@ class Radar:
         self.last_box = None
         self.box_until = 0.0
 
-    def show_box(self, window, cue, box):
+    def show_box(self, window, cue, box, reported=False):
         if not cue or not self.prefs["boxes"]:
             self.clear_box()
             return
@@ -423,7 +439,7 @@ class Radar:
                                    for value, old in zip(box, previous)):
             self.box_overlay.hide()
             return
-        self.box_overlay.draw(container_marker(width, height), window[0]+x-12, window[1]+y-12)
+        self.box_overlay.draw(container_marker(width, height, reported), window[0]+x-12, window[1]+y-12)
         self.box_until = time.monotonic() + .55
 
     def animate(self, now):
@@ -441,7 +457,7 @@ class Radar:
                 (left + round(x), top + round(y)) for x, y in positions.values()
             )
             frame = radar_frame(bounds["width"], bounds["height"], positions, now,
-                                self.prefs, self.north)
+                                self.prefs, self.north, reported=self.community.points)
             self.overlay.draw(frame, left, top, round(255 * self.prefs["opacity"] / 100))
         if self.notice_until and now >= self.notice_until:
             self.clear_notice(fade=True)
@@ -532,16 +548,22 @@ class Radar:
         self.notice_key = ("mark", window)
         self.notice_until = now + 2.5
 
-    def observe_chest(self, window, present, area=None):
+    def observe_chest(self, window, present, area=None, point_id=None):
         now = time.monotonic()
         if not present:
             self.cue_hits = 0
             if now - self.last_cue > 1.5:
                 self.cue_saved = False
+                self.cue_uploaded = False
             return
         self.last_cue = now
         self.cue_hits += 1
-        if self.cue_hits < 2 or self.cue_saved:
+        if self.cue_hits < 2:
+            return
+        if point_id is not None and not self.cue_uploaded and self.community.enabled:
+            self.community.submit(point_id)
+            self.cue_uploaded = True
+        if self.cue_saved:
             return
         item = {"seen_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 "map_version": "43.10", "player_area_on_map": area}
@@ -668,14 +690,14 @@ class Radar:
                         self.show_notice("restored", window, timed=True)
                 else:
                     self.issue = None
-                _, bounds, dots, north, distance, cue, area, box = args
+                _, bounds, dots, north, distance, cue, area, box, point_id = args
                 self.status.set(f"Точек на мини-карте: {len(dots)}")
                 self.closest_distance = distance
                 self.render(bounds, {key: point for key, point in dots.items()
                                      if key not in self.options["opened"]}, north)
                 self.check_proximity(window, distance)
-                self.observe_chest(window, cue, area)
-                self.show_box(window, cue, box)
+                self.observe_chest(window, cue, area, point_id)
+                self.show_box(window, cue, box, point_id in self.community.points)
             elif state in ("lost", "capture") and args[0] == window:
                 self.hide()
                 self.status.set(ISSUES[state][0])
