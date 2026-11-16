@@ -151,6 +151,21 @@ def container_marker(width, height, reported=False):
     return image
 
 
+def saved_chest_marker(projected):
+    chest = Image.fromarray(projected)
+    label = "Сохранённый вид"
+    face = font(12, True)
+    label_width = round(face.getlength(label)) + 22
+    image = Image.new("RGBA", (max(chest.width, label_width), chest.height + 25))
+    image.alpha_composite(chest)
+    draw = ImageDraw.Draw(image)
+    y = chest.height + 2
+    draw.rounded_rectangle((0, y, label_width-1, y+21), radius=6,
+                           fill="#291b40ed", outline="#d7a9ff")
+    draw.text((11, y+10), label, font=face, fill="#f8eeff", anchor="lm")
+    return image
+
+
 @lru_cache(maxsize=80)
 def marker_sprite(phase, size=5, icon=True):
     size = GLOW_RADIUS * 2 + 1

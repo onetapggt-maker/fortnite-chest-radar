@@ -20,11 +20,12 @@ from PIL import Image, ImageDraw, ImageTk
 import pystray
 
 from radar_visuals import (
-    GLOW_RADIUS, NOTICE_SIZE, Layer, container_marker, radar_frame, notice_card, preview_base,
+    GLOW_RADIUS, NOTICE_SIZE, Layer, container_marker, saved_chest_marker, radar_frame, notice_card, preview_base,
     preview_frame,
 )
 from radar_settings import Settings, clean_preferences
 from chest_cue import chest_cue, glowing_container
+from chest_memory import ChestMemory, warp_snapshot
 from community import Community
 
 
@@ -32,6 +33,7 @@ HERE = Path(__file__).resolve().parent
 CONFIG = HERE / "minimap.local.json"
 PREFERENCES = HERE / "radar-ui.local.json"
 OBSERVATIONS = HERE / "chest-observations.jsonl"
+MEMORY_FOLDER = HERE / "chest-memory.local"
 REPORT_URL = "https://github.com/onetapggt-maker/fortnite-chest-radar/issues/new"
 # v43.10 source map of 2048 pixels uses about .006825 pixels per world centimetre.
 METERS_PER_PIXEL = 1 / .6825
@@ -192,6 +194,7 @@ def ignore_markers(bounds, points):
 def monitor(stop, events, options):
     try:
         island = Island()
+        memory = ChestMemory(MEMORY_FOLDER)
         last_region = None
         with MSS() as capture:
             events.put(("ready",))
@@ -237,8 +240,14 @@ def monitor(stop, events, options):
                     point_id = unique_nearby_point(distances, opened) if cue else None
                     distances[list(opened)] = np.inf
                     distance = distances.min()
+                    saved_image = None
+                    if options["memory"] and distance * METERS_PER_PIXEL <= 26:
+                        nearby = np.flatnonzero(distances * METERS_PER_PIXEL <= 26).tolist()
+                        nearby.sort(key=distances.__getitem__)
+                        saved_image = memory.update(game_frame, point_id, nearby, cue, options["memory_drawn"])
                     events.put(("located", window, bounds, dots, north, distance * METERS_PER_PIXEL,
-                                cue, tuple(round(float(value), 1) for value in center), box, point_id))
+                                cue, tuple(round(float(value), 1) for value in center), box, point_id,
+                                saved_image))
                 stop.wait(0.18)
     except (OSError, ValueError, cv2.error, RuntimeError, ScreenShotError) as error:
         events.put(("error", str(error)))
@@ -305,10 +314,14 @@ class Radar:
                 pass
         self.build_settings()
         self.options["boxes"] = self.prefs["boxes"]
+        self.options["memory"] = self.prefs["memory"]
+        self.options["memory_drawn"] = None
         self.community = Community(self.prefs["share"])
         self.overlay = Layer()
         self.notice = Layer()
         self.box_overlay = Layer()
+        self.memory_overlay = Layer()
+        self.memory_until = 0.0
         self.last_box = None
         self.box_until = 0.0
         root.protocol("WM_DELETE_WINDOW", root.withdraw)
@@ -355,6 +368,10 @@ class Radar:
             self.options["boxes"] = value
             if not value:
                 self.clear_box()
+        if key == "memory":
+            self.options["memory"] = value
+            if not value:
+                self.clear_memory()
         if key == "share":
             self.community.set_enabled(value)
         if not self.prefs["notices"]:
@@ -394,6 +411,7 @@ class Radar:
         self.overlay.close()
         self.notice.close()
         self.box_overlay.close()
+        self.memory_overlay.close()
         self.root.destroy()
 
     def hide(self):
@@ -429,6 +447,25 @@ class Radar:
         self.last_box = None
         self.box_until = 0.0
 
+    def clear_memory(self):
+        self.memory_overlay.hide()
+        self.options["memory_drawn"] = None
+
+    def show_memory(self, window, result):
+        if not self.prefs["memory"] or result is None or result[1] in self.options["opened"]:
+            self.clear_memory()
+            return
+        if result[0] == "saved":
+            self.clear_memory()
+            self.show_feedback(window, "Внешний вид сохранён", "Вырез сундука сохранён на этом компьютере")
+            return
+        _, _, quad, crop = result
+        (x, y, _, _), projected = warp_snapshot(crop, quad)
+        marker = saved_chest_marker(projected)
+        self.memory_overlay.draw(marker, window[0]+x, window[1]+y)
+        self.options["memory_drawn"] = (x, y, marker.width, marker.height)
+        self.memory_until = time.monotonic() + .58
+
     def show_box(self, window, cue, box, reported=False):
         if not cue or not self.prefs["boxes"]:
             self.clear_box()
@@ -447,6 +484,8 @@ class Radar:
         self.box_until = time.monotonic() + .55
 
     def animate(self, now):
+        if self.memory_overlay.visible and now >= self.memory_until:
+            self.clear_memory()
         if self.box_overlay.visible and now >= self.box_until:
             self.clear_box()
         if self.mark_bounds:
@@ -534,6 +573,7 @@ class Radar:
         closest = min(self.targets, key=lambda key:
                       (self.targets[key][0]-cx)**2 + (self.targets[key][1]-cy)**2)
         self.options["opened"] = (*self.options["opened"], closest)
+        self.clear_memory()
         self.closest_distance = float("inf")
         self.targets.pop(closest)
         self.points.pop(closest, None)
@@ -707,6 +747,7 @@ class Radar:
             self.cue_hits = 0
             self.hide()
             self.clear_box()
+            self.clear_memory()
             self.clear_notice()
             self.lost_signal = False
             self.chest_band = None
@@ -721,7 +762,7 @@ class Radar:
                         self.show_notice("restored", window, timed=True)
                 else:
                     self.issue = None
-                _, bounds, dots, north, distance, cue, area, box, point_id = args
+                _, bounds, dots, north, distance, cue, area, box, point_id, saved_image = args
                 self.status.set(f"Точек на мини-карте: {len(dots)}")
                 self.closest_distance = distance
                 self.render(bounds, {key: point for key, point in dots.items()
@@ -729,8 +770,10 @@ class Radar:
                 self.check_proximity(window, distance)
                 self.observe_chest(window, cue, area, point_id)
                 self.show_box(window, cue, box, point_id in self.community.points)
+                self.show_memory(window, saved_image)
             elif state in ("lost", "capture") and args[0] == window:
                 self.hide()
+                self.clear_memory()
                 self.status.set(ISSUES[state][0])
                 self.alert(state, window)
                 if state == "lost":
