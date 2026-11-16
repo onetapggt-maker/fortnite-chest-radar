@@ -131,27 +131,6 @@ def chest_symbol(draw, x, y, size, color, line):
             draw.line((rail, y-size*.35, rail, y+size*.65), fill=color, width=line)
 
 
-@lru_cache(maxsize=32)
-def container_marker(width, height, reported=False):
-    pad = 12
-    label = "Запомненный сундук" if reported else "Возможный сундук"
-    accent = "#d7a9ff" if reported else "#b3f5ff"
-    face = font(12, True)
-    label_width = round(face.getlength(label)) + 34
-    image = Image.new("RGBA", (max(width, label_width) + 2*pad, height + 50))
-    draw = ImageDraw.Draw(image)
-    length = max(6, min(20, width//5, height//5))
-    for x, dx in ((pad, 1), (pad+width, -1)):
-        for y, dy in ((pad, 1), (pad+height, -1)):
-            draw.line((x, y+dy*length, x, y, x+dx*length, y), fill=accent, width=2)
-    top = height + pad + 7
-    draw.rounded_rectangle((pad, top, pad+label_width, top+24), radius=7,
-                           fill="#20132eee", outline=accent)
-    chest_symbol(draw, pad+13, top+11, 6, "#ffd476", 1)
-    draw.text((pad+24, top+12), label, font=face, fill="#f8eeff", anchor="lm")
-    return image
-
-
 @lru_cache(maxsize=1)
 def red_cube():
     image = Image.new("RGBA", (160, 160))

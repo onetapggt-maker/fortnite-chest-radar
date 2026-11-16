@@ -131,8 +131,8 @@ class ChestMemory:
 
     def update(self, frame, point, nearby, cue, overlays=()):
         known = [(key, view) for key in nearby for view in self.get(key)]
-        can_learn = cue and point is not None and self.references and len(self.get(point)) < 3
-        if not known and not can_learn:
+        can_recognize = cue and bool(self.references)
+        if not known and not can_recognize:
             return None
         height, width = frame.shape[:2]
         ratio = 540 / height
@@ -140,15 +140,16 @@ class ChestMemory:
         gray = cv2.cvtColor(resized[:, :, :3], cv2.COLOR_BGR2GRAY)
         mask = np.zeros_like(gray)
         mask[112:465, round(gray.shape[1]*.18):round(gray.shape[1]*.82)] = 255
+        scene_mask = mask.copy() if overlays else mask
         for overlay in overlays:
             x, y, w, h = (round(value*ratio) for value in overlay)
-            mask[max(0,y):max(0,y+h), max(0,x):max(0,x+w)] = 0
-        current = self.features(gray, mask)
-        if current is None:
-            return None
+            scene_mask[max(0,y):max(0,y+h), max(0,x):max(0,x+w)] = 0
+        current = self.features(gray, scene_mask) if known or not overlays else None
         # The global cue says a chest is nearby, but does not prove it is visible.
         visible_points = {}
         for key, (scene, rectangle, _) in known:
+            if current is None:
+                break
             if key in visible_points:
                 continue
             quad = self.project_scene(scene, current, rectangle)
@@ -159,10 +160,16 @@ class ChestMemory:
                 break
         if visible_points:
             return ("images", visible_points)
-        if can_learn:
+        if can_recognize:
+            current = self.features(gray, mask) if overlays else current
+            if current is None:
+                return None
             for reference in self.references:
                 rh, rw = reference[2]
                 visible = self.project(reference, current, (0, 0, rw, rh), 9)
-                if visible is not None and self.remember(point, resized, gray, visible):
-                    return ("saved", point)
+                if visible is not None:
+                    images = {point: visible / ratio}
+                    if point is not None and self.remember(point, resized, gray, visible):
+                        return ("saved", images)
+                    return ("images", images)
         return None

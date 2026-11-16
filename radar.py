@@ -20,7 +20,7 @@ from PIL import Image, ImageDraw, ImageTk
 import pystray
 
 from radar_visuals import (
-    GLOW_RADIUS, NOTICE_SIZE, Layer, container_marker, saved_chest_marker, radar_frame, notice_card, preview_base,
+    GLOW_RADIUS, NOTICE_SIZE, Layer, saved_chest_marker, radar_frame, notice_card, preview_base,
     preview_frame,
 )
 from radar_settings import Settings, clean_preferences
@@ -229,7 +229,8 @@ def monitor(stop, events, options):
                     stop.wait(0.5)
                     continue
                 if result is None:
-                    events.put(("lost", window, cue, box))
+                    live = memory.update(game_frame, None, (), cue, options["memory_drawn"]) if options["memory"] else None
+                    events.put(("lost", window, cue, box, live))
                 else:
                     opened = options["opened"]
                     dots = island.visible_chests(result, bounds["width"], bounds["height"], opened)
@@ -237,16 +238,19 @@ def monitor(stop, events, options):
                     north = math.degrees(math.atan2(-inverse[1, 1], -inverse[0, 1]))
                     center = result @ np.array([bounds["width"]/2, bounds["height"]/2, 1])
                     distances = np.linalg.norm(island.points - center, axis=1)
+                    nearest = int(distances.argmin())
+                    can_show_cue = cue and not (nearest in opened and distances[nearest] * METERS_PER_PIXEL <= 11)
                     point_id = unique_nearby_point(distances, opened) if cue else None
                     distances[list(opened)] = np.inf
                     distance = distances.min()
                     saved_image = None
-                    if options["memory"] and distance * METERS_PER_PIXEL <= 26:
+                    if options["memory"] and (can_show_cue or distance * METERS_PER_PIXEL <= 26):
                         nearby = np.flatnonzero(distances * METERS_PER_PIXEL <= 26).tolist()
                         nearby.sort(key=distances.__getitem__)
-                        saved_image = memory.update(game_frame, point_id, nearby, cue, options["memory_drawn"])
+                        saved_image = memory.update(game_frame, point_id, nearby, can_show_cue, options["memory_drawn"])
                     events.put(("located", window, bounds, dots, north, distance * METERS_PER_PIXEL,
-                                cue, tuple(round(float(value), 1) for value in center), box, point_id,
+                                cue, tuple(round(float(value), 1) for value in center),
+                                box if can_show_cue else None, point_id,
                                 saved_image))
                 stop.wait(0.18)
     except (OSError, ValueError, cv2.error, RuntimeError, ScreenShotError) as error:
@@ -459,9 +463,7 @@ class Radar:
             self.clear_memory()
             return
         if result[0] == "saved":
-            self.clear_memory()
             self.show_feedback(window, "Внешний вид сохранён", "Вырез сундука сохранён на этом компьютере")
-            return
         visible = [quad for point, quad in result[1].items() if point not in self.options["opened"]]
         drawn = []
         for index, layer in enumerate(self.memory_layers):
@@ -474,7 +476,7 @@ class Radar:
         self.options["memory_drawn"] = tuple(drawn)
         self.memory_until = time.monotonic() + .58
 
-    def show_box(self, window, cue, box, reported=False):
+    def show_box(self, window, cue, box):
         if not cue or not self.prefs["boxes"]:
             self.clear_box()
             return
@@ -488,7 +490,9 @@ class Radar:
                                    for value, old in zip(box, previous)):
             self.box_overlay.hide()
             return
-        self.box_overlay.draw(container_marker(width, height, reported), window[0]+x-12, window[1]+y-12)
+        quad = np.float32([[x, y], [x+width, y], [x+width, y+height], [x, y+height]])
+        (left, top), marker = saved_chest_marker(quad)
+        self.box_overlay.draw(marker, window[0]+left, window[1]+top)
         self.box_until = time.monotonic() + .55
 
     def animate(self, now):
@@ -777,18 +781,19 @@ class Radar:
                                      if key not in self.options["opened"]}, north)
                 self.check_proximity(window, distance)
                 self.observe_chest(window, cue, area, point_id)
-                self.show_box(window, cue, box, point_id in self.community.points)
+                self.show_box(window, cue and saved_image is None, box)
                 self.show_memory(window, saved_image)
             elif state in ("lost", "capture") and args[0] == window:
                 self.hide()
-                self.clear_memory()
                 self.status.set(ISSUES[state][0])
                 self.alert(state, window)
                 if state == "lost":
                     self.observe_chest(window, args[1])
-                    self.show_box(window, args[1], args[2])
+                    self.show_box(window, args[1] and args[3] is None, args[2])
+                    self.show_memory(window, args[3])
                 else:
                     self.clear_box()
+                    self.clear_memory()
             elif state in ("ready", "idle") and window is None:
                 self.status.set("Переключись в матч Fortnite")
         if active and self.error:
