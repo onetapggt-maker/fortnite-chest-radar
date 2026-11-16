@@ -153,61 +153,29 @@ def container_marker(width, height, reported=False):
 
 
 @lru_cache(maxsize=1)
-def chest_silhouette():
-    """A translucent, faceted chest with the bright edges of an X-ray outline."""
-    image = Image.new("RGBA", (180, 142))
-    hull = [(12, 62), (19, 46), (50, 24), (66, 16), (141, 33),
-            (155, 45), (171, 80), (161, 100), (129, 126), (112, 133), (12, 106)]
-    halo = Image.new("L", image.size)
-    ImageDraw.Draw(halo).polygon(hull, fill=145)
-    image.paste((255, 220, 4, 255), (0, 0, image.width, image.height),
-                halo.filter(ImageFilter.GaussianBlur(5)))
-    faces = Image.new("RGBA", image.size)
-    draw = ImageDraw.Draw(faces)
-    edge = (255, 252, 58, 244)
-    polygons = (
-        ([(12, 77), (111, 101), (112, 133), (12, 106)], (230, 166, 0, 188)),
-        ([(111, 101), (169, 79), (161, 100), (129, 126), (112, 133)], (181, 129, 0, 176)),
-        ([(12, 62), (19, 46), (117, 69), (111, 101), (12, 77)], (255, 211, 5, 200)),
-        ([(19, 46), (50, 24), (141, 45), (117, 69)], (255, 231, 15, 193)),
-        ([(50, 24), (66, 16), (141, 33), (155, 45), (141, 45)], (255, 247, 85, 182)),
-        ([(117, 69), (141, 45), (155, 45), (171, 80), (111, 101)], (226, 176, 0, 181)),
-    )
-    for points, color in polygons:
-        draw.polygon(points, fill=color)
-    for points in (
-        hull + [hull[0]],
-        [(12, 77), (111, 101), (171, 80)],
-        [(19, 46), (117, 69), (141, 45), (50, 24)],
-        [(117, 69), (111, 101), (112, 133)],
-        [(33, 51), (28, 80), (28, 110)],
-        [(96, 64), (91, 96), (92, 126)],
-    ):
-        draw.line(points, fill=edge, width=2, joint="curve")
-    draw.polygon([(55, 84), (71, 88), (71, 104), (55, 100)],
-                 fill=(255, 248, 91, 227), outline=edge)
-    draw.ellipse((61, 90, 66, 96), fill=(119, 83, 0, 220))
-    image.alpha_composite(faces)
+def red_cube():
+    image = Image.new("RGBA", (160, 160))
+    draw = ImageDraw.Draw(image)
+    top_left, ridge, far_right, joint = (10, 46), (59, 13), (150, 41), (102, 74)
+    bottom_left, bottom_joint, bottom_right = (10, 118), (102, 146), (150, 113)
+    draw.polygon([top_left, ridge, far_right, joint], fill=(255, 78, 83, 125))
+    draw.polygon([top_left, joint, bottom_joint, bottom_left], fill=(235, 29, 42, 145))
+    draw.polygon([joint, far_right, bottom_right, bottom_joint], fill=(160, 10, 27, 155))
+    edge = (255, 71, 79, 235)
+    draw.line([top_left, ridge, far_right, bottom_right, bottom_joint, bottom_left, top_left],
+              fill=edge, width=3, joint="curve")
+    draw.line([top_left, joint, far_right], fill=edge, width=2)
+    draw.line([joint, bottom_joint], fill=edge, width=2)
     return np.asarray(image)
 
 
 def saved_chest_marker(quad):
     x, y, width, height = cv2.boundingRect(quad)
-    silhouette = chest_silhouette()
-    sh, sw = silhouette.shape[:2]
+    cube = red_cube()
+    sh, sw = cube.shape[:2]
     source = np.float32([[0, 0], [sw-1, 0], [sw-1, sh-1], [0, sh-1]])
     transform = cv2.getPerspectiveTransform(source, quad - np.float32([x, y]))
-    chest = Image.fromarray(cv2.warpPerspective(silhouette, transform, (width, height)))
-    badge_width, badge_height = 30, 27
-    image = Image.new("RGBA", (max(width, badge_width), height + badge_height))
-    image.alpha_composite(chest, ((image.width-width)//2, badge_height))
-    draw = ImageDraw.Draw(image)
-    mid = image.width // 2
-    draw.rounded_rectangle((mid-12, 1, mid+12, 19), radius=5,
-                           fill="#fcfdff", outline="#423f31")
-    draw.polygon([(mid-4, 18), (mid+4, 18), (mid, 24)], fill="#fcfdff")
-    chest_symbol(draw, mid, 9, 6, "#4a4532", 1)
-    return (x-(image.width-width)//2, y-badge_height), image
+    return (x, y), Image.fromarray(cv2.warpPerspective(cube, transform, (width, height)))
 
 
 @lru_cache(maxsize=80)
