@@ -78,6 +78,10 @@
       "observations": 1
     },
     {
+      "point_id": 255,
+      "observations": 1
+    },
+    {
       "point_id": 257,
       "observations": 1
     },
@@ -94,7 +98,19 @@
       "observations": 2
     },
     {
+      "point_id": 272,
+      "observations": 1
+    },
+    {
       "point_id": 274,
+      "observations": 1
+    },
+    {
+      "point_id": 285,
+      "observations": 1
+    },
+    {
+      "point_id": 304,
       "observations": 1
     },
     {
@@ -163,7 +179,7 @@
     },
     {
       "point_id": 546,
-      "observations": 1
+      "observations": 2
     },
     {
       "point_id": 548,
@@ -242,6 +258,10 @@
       "observations": 1
     },
     {
+      "point_id": 718,
+      "observations": 1
+    },
+    {
       "point_id": 719,
       "observations": 1
     },
@@ -294,8 +314,12 @@
       "observations": 2
     },
     {
-      "point_id": 792,
+      "point_id": 791,
       "observations": 1
+    },
+    {
+      "point_id": 792,
+      "observations": 2
     },
     {
       "point_id": 793,
@@ -319,11 +343,11 @@
     },
     {
       "point_id": 800,
-      "observations": 1
+      "observations": 2
     },
     {
       "point_id": 801,
-      "observations": 1
+      "observations": 2
     },
     {
       "point_id": 802,
